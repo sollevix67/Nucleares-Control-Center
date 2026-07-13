@@ -463,6 +463,8 @@ class ControlTests(unittest.TestCase):
                 self.assertIn("NUCLEARES", html); self.assertIn("autopilot-toggle", html)
                 self.assertIn("reservoir-list", html); self.assertIn("main-generator-list", html)
                 self.assertIn("pool-capacity", html); self.assertIn("external-capacity", html)
+                self.assertIn('id="pool-capacity" type="number" min="1" max="10000000" step="1"', html)
+                self.assertIn('id="external-capacity" type="number" min="1" max="10000000" step="1"', html)
                 self.assertIn('data-supervision-zone="reactor"', html)
                 self.assertIn('data-supervision-zone="chemistry"', html)
                 self.assertIn('id="poison-chart"', html)
