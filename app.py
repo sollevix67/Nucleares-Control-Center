@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-APP_VERSION = "0.5.5"
+APP_VERSION = "0.5.6"
 BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 USER_ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 STATIC_DIR = BUNDLE_ROOT / "static"
@@ -60,7 +60,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "auto_start": False,
         "target_core_temp": 330.0,
         "grid_follow": True,
-        "grid_buffer_mw": 10.0,
+        "grid_buffer_mw": 0.0,
         "train_power_cap_kw": 100000.0,
         "target_boron_ppm": None,
         "boron_deadband_ppm": 5.0,
@@ -476,6 +476,7 @@ class ControlCenter:
         self.poison_previous: dict[str, tuple[float, float]] = {}
         self.poison_trends: dict[str, float] = {}
         self.filtered_grid_target_kw: float | None = None
+        self.mscv_ordered: dict[int, float] = {}
         self.train_pid = {i: PID(0.00002, 0.000002, 0.0, -0.3, 0.2) for i in range(3)}
         self.secondary_pid = {i: PID(0.0005, 0.00005, 0.001, -2.0, 2.0) for i in range(3)}
         self.threads: list[threading.Thread] = []
@@ -1177,12 +1178,33 @@ class ControlCenter:
             steam = as_number(s.get(f"STEAM_GEN_{i}_OUTLET"))
             actual = as_number(s.get(f"MSCV_{i}_OPENING_ACTUAL"))
             error = target_each - power
-            delta = 0.0 if target_each and abs(error) < target_each * 0.03 else self.train_pid[i].step(error, dt)
-            new_mscv = max(0.5, min(100.0, actual + delta))
+            in_deadband = bool(target_each) and abs(error) < target_each * 0.03
+            if in_deadband:
+                self.train_pid[i].reset()
+                delta = 0.0
+            else:
+                delta = self.train_pid[i].step(error, dt)
+
+            # MSCV_ACTUAL is rounded to whole percentage points by some game
+            # versions. Starting every cycle from ACTUAL therefore repeats e.g.
+            # 23 -> 22.7 forever. Accumulate from the last successful order,
+            # while keeping the order within five points of the real actuator.
+            ordered = self.mscv_ordered.get(i, actual)
+            ordered = max(actual - 5.0, min(actual + 5.0, ordered))
+            if delta < 0:
+                ordered = min(ordered, actual)
+            elif delta > 0:
+                ordered = max(ordered, actual)
+            else:
+                ordered = actual
+            new_mscv = max(0.5, min(100.0, ordered + delta))
+            new_mscv = max(actual - 5.0, min(actual + 5.0, new_mscv))
             if delta > 0 and steam > 0:
                 new_mscv = min(new_mscv, max(steam / 8.0, 1.0))
-            self._write("production", f"MSCV_{i}_OPENING_ORDERED", round(new_mscv, 2),
-                        f"Suivi réseau, cible {target_each / 1000:.1f} MW")
+            new_mscv = round(new_mscv, 2)
+            if self._write("production", f"MSCV_{i}_OPENING_ORDERED", new_mscv,
+                           f"Suivi réseau, cible {target_each / 1000:.1f} MW"):
+                self.mscv_ordered[i] = new_mscv
             bypass = f"STEAM_TURBINE_{i}_BYPASS_ORDERED"
             if bypass in self.writable:
                 self._write(
@@ -1378,6 +1400,7 @@ class ControlCenter:
                     pid.reset()
                 self.dynamic_temp_setpoint = float(self.config["autopilot"]["target_core_temp"])
                 self.filtered_grid_target_kw = None
+                self.mscv_ordered.clear()
                 if self.config["autopilot"].get("target_boron_ppm") is None:
                     self.dynamic_boron_target = None
         if not enabled:

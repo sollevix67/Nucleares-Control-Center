@@ -19,7 +19,7 @@
     "auto_start": false,
     "target_core_temp": 330.0,
     "grid_follow": true,
-    "grid_buffer_mw": 10.0,
+    "grid_buffer_mw": 0.0,
     "train_power_cap_kw": 100000.0,
     "target_boron_ppm": null,
     "boron_deadband_ppm": 5.0,

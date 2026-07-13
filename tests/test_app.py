@@ -73,6 +73,7 @@ class ControlTests(unittest.TestCase):
     def test_emergency_generators_default_to_automatic_detection(self):
         overrides = app.DEFAULT_CONFIG["equipment_overrides"]["emergency_generators"]
         self.assertEqual(overrides, {"1": "auto", "2": "auto"})
+        self.assertEqual(app.DEFAULT_CONFIG["autopilot"]["grid_buffer_mw"], 0.0)
 
     def test_alarm_and_derived_values(self):
         with MockServer() as mock, tempfile.TemporaryDirectory() as temp:
@@ -297,6 +298,39 @@ class ControlTests(unittest.TestCase):
                 commands = dict(mock.plant.commands)
                 self.assertLess(commands["MSCV_0_OPENING_ORDERED"], state["MSCV_0_OPENING_ACTUAL"])
                 self.assertEqual(commands["STEAM_TURBINE_0_BYPASS_ORDERED"], 0.0)
+            finally:
+                app.DATA_DIR = old_data
+
+    def test_mscv_order_accumulates_past_integer_actual_value(self):
+        with MockServer() as mock, tempfile.TemporaryDirectory() as temp:
+            old_data = app.DATA_DIR; app.DATA_DIR = Path(temp)
+            try:
+                center = app.ControlCenter(self.config(mock.url))
+                center.readable, center.writable = center.client.discover()
+                state = center.client.batch_get(center.readable)
+                state.update({
+                    "POWER_DEMAND_MW": 10.0,
+                    "GENERATOR_2_KW": 40756.46,
+                    "MSCV_2_OPENING_ACTUAL": 23.0,
+                    "STEAM_TURBINE_2_INSTALLED": True,
+                    "STEAM_GEN_2_STATUS": 2,
+                })
+                for index in (0, 1):
+                    state[f"STEAM_TURBINE_{index}_INSTALLED"] = False
+                    state[f"STEAM_GEN_{index}_STATUS"] = 4
+                center.derived = {"poisons": {"guard_active": False}}
+                with mock.plant.lock:
+                    mock.plant.commands.clear()
+
+                for _ in range(5):
+                    center._control_grid(state, 5.0, secondary=False)
+
+                orders = [
+                    float(value) for name, value in mock.plant.commands
+                    if name == "MSCV_2_OPENING_ORDERED"
+                ]
+                self.assertEqual(orders, [22.7, 22.4, 22.1, 21.8, 21.5])
+                self.assertEqual(center.mscv_ordered[2], 21.5)
             finally:
                 app.DATA_DIR = old_data
 

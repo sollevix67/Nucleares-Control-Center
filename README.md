@@ -60,7 +60,7 @@ Pour simuler également un module chimique installé, lancer `python mock_game.p
 
 Le pilote ne commande que les variables annoncées comme accessibles en écriture par la version courante du jeu. Pour les circuits indexés, cette vérification est complétée par `STEAM_TURBINE_*_INSTALLED` et par l’état du générateur de vapeur. Une tranche marquée `NOT_INSTALLED` ne reçoit aucune commande MSCV ou bypass. Les pompes primaires et secondaires sont filtrées séparément par leur propre état : l’absence d’une pompe ne désactive donc plus par erreur une turbine installée. Une commande absente est ignorée et inscrite dans le journal. Les opérations qui exigent encore une interaction physique du personnage dans le jeu ne peuvent pas être automatisées par le webserveur.
 
-En suivi réseau, les MSCV modulent la puissance vers la demande augmentée de la marge configurée. Les bypass de turbine ne servent pas de régulateur continu : ils sont explicitement maintenus à `0 %` pour envoyer la vapeur disponible vers la turbine. Pour viser exactement la demande affichée, régler **Marge réseau** à `0 MW`.
+En suivi réseau, les MSCV modulent la puissance vers la demande augmentée de la marge configurée, fixée à `0 MW` par défaut. Les bypass de turbine ne servent pas de régulateur continu : ils sont explicitement maintenus à `0 %` pour envoyer la vapeur disponible vers la turbine. La consigne MSCV est accumulée entre les cycles afin de franchir l’arrondi à l’entier de certaines versions du jeu, tout en restant limitée à cinq points de l’ouverture réelle.
 
 ### Réservoirs et générateurs dans Supervision
 
