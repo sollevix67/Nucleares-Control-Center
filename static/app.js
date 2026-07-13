@@ -5,11 +5,16 @@ const GAME_TEXT_FR = {
   ACTIVE:"ACTIF",ACTIVO:"ACTIF",ACTIVA:"ACTIVE",INACTIVE:"INACTIF",INACTIVO:"INACTIF",INACTIVA:"INACTIVE",
   OPERATIVE:"OPÉRATIONNEL",OPERATIONAL:"OPÉRATIONNEL",OPERATIVO:"OPÉRATIONNEL",
   OFFLINE:"HORS LIGNE",APAGADO:"ARRÊTÉ",DETENIDO:"ARRÊTÉ",ENCENDIDO:"EN MARCHE",
-  FUNCIONANDO:"EN MARCHE",STANDBY:"EN ATTENTE",ESPERA:"EN ATTENTE",LISTO:"PRÊT"
+  FUNCIONANDO:"EN MARCHE",STANDBY:"EN ATTENTE",ESPERA:"EN ATTENTE","EN ESPERA":"EN ATTENTE",LISTO:"PRÊT",
+  AUTOMATICO:"AUTOMATIQUE","MODO AUTOMATICO":"AUTOMATIQUE",MANUAL:"MANUEL",
+  PRESURIZADO:"PRESSURISÉ","NO PRESURIZADO":"NON PRESSURISÉ",DESPRESURIZADO:"DÉPRESSURISÉ",
+  "NO INSTALADO":"NON INSTALLÉ","NO INSTALADA":"NON INSTALLÉE","SIN INSTALAR":"NON INSTALLÉ",
+  "NO DISPONIBLE":"INDISPONIBLE","SIN COMBUSTIBLE":"SANS CARBURANT","COMBUSTIBLE BAJO":"CARBURANT FAIBLE",
+  FALLO:"DÉFAUT",FALLA:"DÉFAUT",AVERIA:"DÉFAUT","REQUIERE MANTENIMIENTO":"MAINTENANCE REQUISE"
 };
 const gameText = value => {
   if (value === null || value === undefined || value === "") return "INCONNU";
-  const key = String(value).normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim().toUpperCase();
+  const key = String(value).normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim().toUpperCase().replaceAll("_"," ").replaceAll("-"," ").replace(/\s+/g," ");
   return GAME_TEXT_FR[key] || String(value);
 };
 
@@ -79,8 +84,8 @@ function setBar(id, value, warningMode = "none") {
 
 function isNotInstalled(value) {
   if (value === null || value === undefined) return false;
-  const text = String(value).trim().toUpperCase().replaceAll("-", "_").replaceAll(" ", "_");
-  return Number(value) === 4 || ["NOT_INSTALLED", "NO_INSTALADO", "NON_INSTALLE", "NON_INSTALLÉ"].includes(text);
+  const text = String(value).normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim().toUpperCase().replaceAll("_", " ").replaceAll("-", " ").replace(/\s+/g," ");
+  return Number(value) === 4 || ["NOT INSTALLED","NO INSTALAD","SIN INSTALAR","NON INSTALLE","NOT PURCHASED","NO COMPRAD"].some(marker=>text.includes(marker));
 }
 
 function trainInstalled(s, i) {

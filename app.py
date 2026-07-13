@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-APP_VERSION = "0.4.0"
+APP_VERSION = "0.4.1"
 BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 USER_ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 STATIC_DIR = BUNDLE_ROOT / "static"
@@ -140,32 +140,44 @@ def as_percent(value: Any, default: float = 0.0) -> float:
     return number * 100.0 if 0.0 <= number <= 1.0 else number
 
 
+def status_key(value: Any) -> str:
+    """Normalize a localized status so detection and translations share the same rules."""
+    text = "" if value is None else str(value).strip()
+    key = "".join(
+        char for char in unicodedata.normalize("NFKD", text) if not unicodedata.combining(char)
+    ).upper().replace("_", " ").replace("-", " ")
+    return " ".join(key.split())
+
+
 def game_text_fr(value: Any) -> str:
     """Translate common English/Spanish status labels returned by Nucleares."""
     if value is None:
         return "INCONNU"
     text = str(value).strip()
-    key = "".join(
-        char for char in unicodedata.normalize("NFKD", text) if not unicodedata.combining(char)
-    ).upper()
+    key = status_key(text)
     translations = {
-        "ACTIVE": "ACTIF", "ACTIVO": "ACTIF", "ACTIVA": "ACTIVE",
-        "INACTIVE": "INACTIF", "INACTIVO": "INACTIF", "INACTIVA": "INACTIVE",
-        "RUNNING": "EN MARCHE", "FUNCIONANDO": "EN MARCHE", "ENCENDIDO": "EN MARCHE",
-        "STARTED": "DÉMARRÉ", "ARRANCADO": "DÉMARRÉ", "STARTING": "DÉMARRAGE", "ARRANCANDO": "DÉMARRAGE",
-        "STOPPED": "ARRÊTÉ", "DETENIDO": "ARRÊTÉ", "APAGADO": "ARRÊTÉ",
+        "ACTIVE": "ACTIF", "ACTIVO": "ACTIF", "ACTIVA": "ACTIVE", "ACTIVADO": "ACTIF", "ACTIVADA": "ACTIVE",
+        "INACTIVE": "INACTIF", "INACTIVO": "INACTIF", "INACTIVA": "INACTIVE", "DESACTIVADO": "INACTIF", "DESACTIVADA": "INACTIVE",
+        "RUNNING": "EN MARCHE", "FUNCIONANDO": "EN MARCHE", "EN FUNCIONAMIENTO": "EN MARCHE", "ENCENDIDO": "EN MARCHE", "ENCENDIDA": "EN MARCHE",
+        "STARTED": "DÉMARRÉ", "ARRANCADO": "DÉMARRÉ", "ARRANCADA": "DÉMARRÉE", "STARTING": "DÉMARRAGE", "ARRANCANDO": "DÉMARRAGE", "ENCENDIENDO": "DÉMARRAGE",
+        "STOPPED": "ARRÊTÉ", "DETENIDO": "ARRÊTÉ", "DETENIDA": "ARRÊTÉE", "PARADO": "ARRÊTÉ", "PARADA": "ARRÊTÉE", "APAGADO": "ARRÊTÉ", "APAGADA": "ARRÊTÉE", "APAGANDO": "ARRÊT",
         "STANDBY": "EN ATTENTE", "EN ESPERA": "EN ATTENTE", "ESPERA": "EN ATTENTE",
-        "AVAILABLE": "DISPONIBLE", "DISPONIBLE": "DISPONIBLE",
-        "OPERATIVE": "OPÉRATIONNEL", "OPERATIONAL": "OPÉRATIONNEL", "OPERATIVO": "OPÉRATIONNEL",
+        "AVAILABLE": "DISPONIBLE", "DISPONIBLE": "DISPONIBLE", "NOT AVAILABLE": "INDISPONIBLE", "NO DISPONIBLE": "INDISPONIBLE",
+        "OPERATIVE": "OPÉRATIONNEL", "OPERATIONAL": "OPÉRATIONNEL", "OPERATIVO": "OPÉRATIONNEL", "OPERATIVA": "OPÉRATIONNELLE",
         "OFFLINE": "HORS LIGNE", "FUERA DE LINEA": "HORS LIGNE",
         "OUT OF SERVICE": "HORS SERVICE", "FUERA DE SERVICIO": "HORS SERVICE",
         "NO POWER": "SANS ÉNERGIE", "SIN ENERGIA": "SANS ÉNERGIE",
-        "MAINTENANCE REQUIRED": "MAINTENANCE REQUISE", "REQUIERE MANTENIMIENTO": "MAINTENANCE REQUISE",
-        "AUTO": "AUTOMATIQUE", "AUTOMATIC": "AUTOMATIQUE", "AUTOMATICO": "AUTOMATIQUE",
-        "MANUAL": "MANUEL",
+        "NO FUEL": "SANS CARBURANT", "SIN COMBUSTIBLE": "SANS CARBURANT", "LOW FUEL": "CARBURANT FAIBLE", "COMBUSTIBLE BAJO": "CARBURANT FAIBLE",
+        "FAULT": "DÉFAUT", "FAILURE": "DÉFAUT", "FALLO": "DÉFAUT", "FALLA": "DÉFAUT", "AVERIA": "DÉFAUT",
+        "MAINTENANCE REQUIRED": "MAINTENANCE REQUISE", "REQUIERE MANTENIMIENTO": "MAINTENANCE REQUISE", "NECESITA MANTENIMIENTO": "MAINTENANCE REQUISE",
+        "AUTO": "AUTOMATIQUE", "AUTOMATIC": "AUTOMATIQUE", "AUTOMATICO": "AUTOMATIQUE", "MODO AUTOMATICO": "AUTOMATIQUE",
+        "MANUAL": "MANUEL", "MODO MANUAL": "MANUEL",
         "PRESSURIZED": "PRESSURISÉ", "PRESURIZADO": "PRESSURISÉ",
-        "NOT PRESSURIZED": "NON PRESSURISÉ", "NO PRESURIZADO": "NON PRESSURISÉ",
-        "OK": "OK", "READY": "PRÊT", "LISTO": "PRÊT",
+        "NOT PRESSURIZED": "NON PRESSURISÉ", "NO PRESURIZADO": "NON PRESSURISÉ", "DEPRESSURIZED": "DÉPRESSURISÉ", "DESPRESURIZADO": "DÉPRESSURISÉ", "SIN PRESION": "SANS PRESSION",
+        "CONNECTED": "CONNECTÉ", "CONECTADO": "CONNECTÉ", "CONECTADA": "CONNECTÉE", "DISCONNECTED": "DÉCONNECTÉ", "DESCONECTADO": "DÉCONNECTÉ", "DESCONECTADA": "DÉCONNECTÉE",
+        "OPEN": "OUVERT", "ABIERTO": "OUVERT", "ABIERTA": "OUVERTE", "CLOSED": "FERMÉ", "CERRADO": "FERMÉ", "CERRADA": "FERMÉE",
+        "NOT INSTALLED": "NON INSTALLÉ", "NO INSTALADO": "NON INSTALLÉ", "NO INSTALADA": "NON INSTALLÉE", "SIN INSTALAR": "NON INSTALLÉ", "NOT PURCHASED": "NON INSTALLÉ", "NO COMPRADO": "NON INSTALLÉ", "NO COMPRADA": "NON INSTALLÉE",
+        "OK": "OK", "READY": "PRÊT", "LISTO": "PRÊT", "LISTA": "PRÊTE", "PREPARADO": "PRÊT", "PREPARADA": "PRÊTE",
     }
     return translations.get(key, text)
 
@@ -176,7 +188,7 @@ def normalize_value(value: Any) -> Any:
     if isinstance(value, (int, float, bool)):
         return value
     text = str(value).strip()
-    if not text or text.lower() == "null":
+    if not text or text.lower() in {"null", "none"}:
         return None
     if text.lower() == "true":
         return True
@@ -197,6 +209,13 @@ class GameClient:
         "WEBSERVER_VIEW_VARIABLES", "VALVE_PANEL_JSON", "RESISTOR_BANKS_JSON",
         "INSTALLED_LOOPS_JSON", "INVENTORY_HTML", "MAINTENANCE_REPORT_HTML",
         "WEATHER_FORECAST_JSON",
+    }
+    # WEBSERVER_BATCH_GET returns numeric localization codes for these string fields
+    # on some game versions. Their individual endpoints return the actual text.
+    TEXT_VARIABLES = {
+        "CORE_STATE", "COOLANT_CORE_STATE", "RODS_STATUS", "CONDENSER_VACUUM_PUMP_MODE",
+        "EMERGENCY_GENERATOR_1_MODE", "EMERGENCY_GENERATOR_1_STATUS", "EMERGENCY_GENERATOR_1_PRESSURIZER",
+        "EMERGENCY_GENERATOR_2_MODE", "EMERGENCY_GENERATOR_2_STATUS", "EMERGENCY_GENERATOR_2_PRESSURIZER",
     }
 
     def __init__(self, base_url: str, timeout: float = 3.0):
@@ -255,6 +274,13 @@ class GameClient:
             if not isinstance(data, dict):
                 raise RuntimeError("Réponse groupée invalide du jeu")
             result.update({str(k).upper(): normalize_value(v) for k, v in data.items()})
+        for variable in self.TEXT_VARIABLES.intersection(name.upper() for name in variables):
+            batch_value = result.get(variable)
+            if batch_value is None or isinstance(batch_value, (bool, int, float)):
+                try:
+                    result[variable] = normalize_value(self.query_text(variable))
+                except (OSError, RuntimeError, urllib.error.URLError):
+                    pass
         return result
 
     def set_value(self, variable: str, value: Any) -> None:
@@ -508,8 +534,12 @@ class ControlCenter:
             return False
         if int(as_number(value, -1.0)) == 4:
             return True
-        text = str(value).strip().upper().replace("-", "_").replace(" ", "_")
-        return text in {"NOT_INSTALLED", "NO_INSTALADO", "NON_INSTALLE", "NON_INSTALLÉ"}
+        key = status_key(value)
+        markers = (
+            "NOT INSTALLED", "NO INSTALAD", "SIN INSTALAR", "NON INSTALLE",
+            "NOT PURCHASED", "NO COMPRAD",
+        )
+        return any(marker in key for marker in markers)
 
     def _train_installed(self, s: dict[str, Any], index: int) -> bool:
         """Return whether a turbine/steam-generator train is physically installed."""
@@ -542,25 +572,25 @@ class ControlCenter:
         return status_name not in s or not self._status_not_installed(s.get(status_name))
 
     def _emergency_generator_installed(self, s: dict[str, Any], index: int) -> bool:
-        names = (
-            f"EMERGENCY_GENERATOR_{index}_STATUS",
-            f"EMERGENCY_GENERATOR_{index}_MODE",
-            f"EMERGENCY_GENERATOR_{index}_PRESSURIZER",
-            f"EMERGENCY_GENERATOR_{index}_FUEL",
-        )
-        values = [s.get(name) for name in names]
         status = s.get(f"EMERGENCY_GENERATOR_{index}_STATUS")
         textual_metadata = (
+            status,
             s.get(f"EMERGENCY_GENERATOR_{index}_MODE"),
             s.get(f"EMERGENCY_GENERATOR_{index}_PRESSURIZER"),
         )
-        if self._status_not_installed(status) or any(
-            self._status_not_installed(value)
-            for value in textual_metadata
-            if isinstance(value, str)
-        ):
+        if any(self._status_not_installed(value) for value in textual_metadata):
             return False
-        return any(value is not None for value in values)
+        if any(isinstance(value, str) and status_key(value) for value in textual_metadata):
+            return True
+        fuel = s.get(f"EMERGENCY_GENERATOR_{index}_FUEL")
+        maintenance = s.get(f"EMERGENCY_GENERATOR_{index}_MAINTENANCE_NEEDED")
+        if fuel is not None and as_number(fuel) > 0:
+            return True
+        if bool(maintenance):
+            return True
+        # A zero-valued localization code plus zero fuel is the placeholder used
+        # by an absent emergency generator; mere variable presence is not proof.
+        return status is not None and as_number(status) not in (0.0, 4.0)
 
     def _update_poison_tracking(self, s: dict[str, Any], now: float | None = None) -> None:
         timestamp = time.monotonic() if now is None else float(now)

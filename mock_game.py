@@ -61,6 +61,11 @@ CHEM_READABLE = [
     "CHEMICAL_FILTER_PUMP_DRY_STATUS", "CHEMICAL_FILTER_PUMP_OVERLOAD_STATUS",
 ]
 CHEM_WRITABLE = {"CHEM_BORON_DOSAGE_ORDERED_RATE", "CHEM_BORON_FILTER_ORDERED_SPEED"}
+TEXT_CODE_VARIABLES = {
+    "CORE_STATE", "COOLANT_CORE_STATE", "RODS_STATUS", "CONDENSER_VACUUM_PUMP_MODE",
+    "EMERGENCY_GENERATOR_1_MODE", "EMERGENCY_GENERATOR_1_STATUS", "EMERGENCY_GENERATOR_1_PRESSURIZER",
+    "EMERGENCY_GENERATOR_2_MODE", "EMERGENCY_GENERATOR_2_STATUS", "EMERGENCY_GENERATOR_2_PRESSURIZER",
+}
 for i in range(3):
     WRITABLE |= {
         f"MSCV_{i}_OPENING_ORDERED", f"STEAM_TURBINE_{i}_BYPASS_ORDERED",
@@ -216,7 +221,10 @@ class MockHandler(BaseHTTPRequestHandler):
         elif variable == "WEBSERVER_BATCH_GET":
             names = query.get("value", [""])[0].split(",")
             with self.plant.lock:
-                values = {name: self.plant.values.get(name) for name in names}
+                values = {
+                    name: 0 if name in TEXT_CODE_VARIABLES and self.plant.values.get(name) is not None else self.plant.values.get(name)
+                    for name in names
+                }
             self._send(json.dumps({"values": values, "errors": {}}), "application/json")
         elif variable == "VALVE_PANEL_JSON":
             self._send(json.dumps({"valves": [{"Name": "Valvula_Pressurizer_Spray", "Value": 0, "IsOpened": False, "IsClosed": True, "Actuator": "OFF"}]}), "application/json")

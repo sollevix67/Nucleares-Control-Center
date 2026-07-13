@@ -44,6 +44,18 @@ class GameClientTests(unittest.TestCase):
             client.set_value("ROD_BANK_POS_0_ORDERED", 77.5)
             self.assertEqual(mock.plant.values["ROD_BANK_POS_0_ACTUAL"], 77.5)
 
+    def test_batch_get_refreshes_text_localization_codes(self):
+        with MockServer() as mock:
+            client = app.GameClient(mock.url)
+            values = client.batch_get([
+                "CORE_STATE", "EMERGENCY_GENERATOR_1_STATUS",
+                "EMERGENCY_GENERATOR_1_MODE", "EMERGENCY_GENERATOR_1_PRESSURIZER",
+            ])
+            self.assertEqual(values["CORE_STATE"], "OPERATIVO")
+            self.assertEqual(values["EMERGENCY_GENERATOR_1_STATUS"], "APAGADO")
+            self.assertEqual(values["EMERGENCY_GENERATOR_1_MODE"], "AUTOMÁTICO")
+            self.assertEqual(values["EMERGENCY_GENERATOR_1_PRESSURIZER"], "PRESURIZADO")
+
     def test_unknown_write_is_refused(self):
         with MockServer() as mock:
             client = app.GameClient(mock.url); client.discover()
@@ -104,16 +116,18 @@ class ControlTests(unittest.TestCase):
             old_data = app.DATA_DIR; app.DATA_DIR = Path(temp)
             try:
                 center = app.ControlCenter(self.config(mock.url))
-                state = dict(mock.plant.values)
-                state.update({
-                    "EMERGENCY_GENERATOR_1_STATUS": "NO INSTALADO",
-                    "EMERGENCY_GENERATOR_1_MODE": None,
-                    "EMERGENCY_GENERATOR_1_PRESSURIZER": None,
-                    "EMERGENCY_GENERATOR_1_FUEL": None,
-                })
-                for name in list(state):
-                    if name.startswith("EMERGENCY_GENERATOR_2_"):
-                        state[name] = None
+                center.readable, center.writable = center.client.discover()
+                with mock.plant.lock:
+                    mock.plant.values.update({
+                        "EMERGENCY_GENERATOR_1_STATUS": "No instalada (sin comprar)",
+                        "EMERGENCY_GENERATOR_1_MODE": "No instalado",
+                        "EMERGENCY_GENERATOR_1_PRESSURIZER": "Sin instalar",
+                        "EMERGENCY_GENERATOR_1_FUEL": 0,
+                    })
+                    for name in list(mock.plant.values):
+                        if name.startswith("EMERGENCY_GENERATOR_2_"):
+                            mock.plant.values[name] = None
+                state = center.client.batch_get(center.readable)
                 emergency = center._derive(state)["generators"]["emergency"]
                 self.assertEqual(len(emergency), 2)
                 self.assertFalse(emergency[0]["installed"])
@@ -122,6 +136,12 @@ class ControlTests(unittest.TestCase):
                 self.assertIsNone(emergency[0]["fuel"])
             finally:
                 app.DATA_DIR = old_data
+
+    def test_spanish_generator_statuses_are_translated(self):
+        self.assertEqual(app.game_text_fr("Modo automático"), "AUTOMATIQUE")
+        self.assertEqual(app.game_text_fr("Sin combustible"), "SANS CARBURANT")
+        self.assertEqual(app.game_text_fr("Despresurizado"), "DÉPRESSURISÉ")
+        self.assertEqual(app.game_text_fr("Requiere mantenimiento"), "MAINTENANCE REQUISE")
 
     def test_autopilot_writes_controls(self):
         with MockServer() as mock, tempfile.TemporaryDirectory() as temp:
