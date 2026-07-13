@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-APP_VERSION = "0.3.3"
+APP_VERSION = "0.3.4"
 BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 USER_ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 STATIC_DIR = BUNDLE_ROOT / "static"
@@ -45,6 +45,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "poll_seconds": 2.0,
     "control_seconds": 5.0,
     "history_seconds": 3600,
+    "reservoir_capacities_l": {
+        "core_pool_tank": 100000.0,
+        "external_coolant": 200000.0,
+    },
     "autopilot": {
         "auto_start": False,
         "target_core_temp": 330.0,
@@ -525,6 +529,27 @@ class ControlCenter:
         status_name = f"COOLANT_SEC_CIRCULATION_PUMP_{index}_STATUS"
         return status_name not in s or not self._status_not_installed(s.get(status_name))
 
+    def _emergency_generator_installed(self, s: dict[str, Any], index: int) -> bool:
+        names = (
+            f"EMERGENCY_GENERATOR_{index}_STATUS",
+            f"EMERGENCY_GENERATOR_{index}_MODE",
+            f"EMERGENCY_GENERATOR_{index}_PRESSURIZER",
+            f"EMERGENCY_GENERATOR_{index}_FUEL",
+        )
+        values = [s.get(name) for name in names]
+        status = s.get(f"EMERGENCY_GENERATOR_{index}_STATUS")
+        textual_metadata = (
+            s.get(f"EMERGENCY_GENERATOR_{index}_MODE"),
+            s.get(f"EMERGENCY_GENERATOR_{index}_PRESSURIZER"),
+        )
+        if self._status_not_installed(status) or any(
+            self._status_not_installed(value)
+            for value in textual_metadata
+            if isinstance(value, str)
+        ):
+            return False
+        return any(value is not None for value in values)
+
     def _derive(self, s: dict[str, Any]) -> dict[str, Any]:
         def optional_number(name: str) -> float | None:
             value = s.get(name)
@@ -549,15 +574,21 @@ class ControlCenter:
 
         reservoirs: list[dict[str, Any]] = []
 
-        def add_reservoir(identifier: str, label: str, value: float | None, unit: str, percent: float | None = None) -> None:
+        def add_reservoir(
+            identifier: str, label: str, value: float | None, unit: str,
+            percent: float | None = None, capacity: float | None = None,
+        ) -> None:
             if value is None:
                 return
+            if percent is None and capacity is not None and capacity > 0:
+                percent = value / capacity * 100.0
             reservoirs.append({
                 "id": identifier,
                 "label": label,
                 "value": round(value, 2),
                 "unit": unit,
                 "percent": None if percent is None else round(max(0.0, min(100.0, percent)), 2),
+                "capacity": None if capacity is None else round(capacity, 2),
             })
 
         add_reservoir("condenser", "Condenseur — liquide", optional_number("CONDENSER_VOLUME"), "L", condenser_fill)
@@ -567,8 +598,17 @@ class ControlCenter:
             "primary_cooling_tank", "Réservoir refroidissement primaire", primary_tank, "L",
             None if primary_tank is None else primary_tank / self.PRIMARY_COOLING_TANK_MAX * 100.0,
         )
-        add_reservoir("core_pool_tank", "Réservoir piscine du cœur", optional_number("CORE_POOL_COOLANT_TANK_VOLUME"), "L")
-        add_reservoir("external_coolant", "Réservoir externe", optional_number("CORE_EXTERNAL_COOLANT_RESERVOIR_VOLUME"), "L")
+        capacities = self.config.get("reservoir_capacities_l", {})
+        add_reservoir(
+            "core_pool_tank", "Réservoir piscine du cœur",
+            optional_number("CORE_POOL_COOLANT_TANK_VOLUME"), "L",
+            capacity=as_number(capacities.get("core_pool_tank"), 100000.0),
+        )
+        add_reservoir(
+            "external_coolant", "Réservoir externe",
+            optional_number("CORE_EXTERNAL_COOLANT_RESERVOIR_VOLUME"), "L",
+            capacity=as_number(capacities.get("external_coolant"), 200000.0),
+        )
         add_reservoir("vacuum_retention", "Réservoir de rétention", retention_volume, "L", retention)
 
         chemical_reservoirs: list[dict[str, Any]] = []
@@ -620,23 +660,26 @@ class ControlCenter:
         for index in (1, 2):
             status_raw = s.get(f"EMERGENCY_GENERATOR_{index}_STATUS")
             mode_raw = s.get(f"EMERGENCY_GENERATOR_{index}_MODE")
-            if status_raw is None and mode_raw is None:
-                continue
-            maintenance = bool(s.get(f"EMERGENCY_GENERATOR_{index}_MAINTENANCE_NEEDED", False))
-            status_text = game_text_fr(status_raw)
+            installed = self._emergency_generator_installed(s, index)
+            maintenance = installed and bool(s.get(f"EMERGENCY_GENERATOR_{index}_MAINTENANCE_NEEDED", False))
+            status_text = game_text_fr(status_raw) if installed else "NON INSTALLÉ"
             normalized = status_text.casefold()
-            if maintenance:
+            if not installed:
+                status_class = ""
+            elif maintenance:
                 status_class = "danger"
             elif any(word in normalized for word in ("actif", "marche", "opérationnel", "ligne", "démarré")):
                 status_class = "ok"
             else:
                 status_class = "warn"
             emergency_generators.append({
-                "id": index, "status": status_text, "status_class": status_class,
-                "mode": game_text_fr(mode_raw),
-                "fuel": optional_number(f"EMERGENCY_GENERATOR_{index}_FUEL"),
+                "id": index, "installed": installed,
+                "installation_status": "INSTALLÉ" if installed else "NON INSTALLÉ",
+                "status": status_text, "status_class": status_class,
+                "mode": game_text_fr(mode_raw) if installed else None,
+                "fuel": optional_number(f"EMERGENCY_GENERATOR_{index}_FUEL") if installed else None,
                 "fuel_unit": "L",
-                "pressurizer": game_text_fr(s.get(f"EMERGENCY_GENERATOR_{index}_PRESSURIZER")),
+                "pressurizer": game_text_fr(s.get(f"EMERGENCY_GENERATOR_{index}_PRESSURIZER")) if installed else None,
                 "maintenance": maintenance,
             })
         return {
@@ -1087,7 +1130,10 @@ class ControlCenter:
         self.store.record_event("autopilot", "Pilote automatique activé" if enabled else "Pilote automatique arrêté")
 
     def update_config(self, updates: dict[str, Any]) -> None:
-        allowed_top = {"game_url", "poll_seconds", "control_seconds", "autopilot", "thresholds"}
+        allowed_top = {
+            "game_url", "poll_seconds", "control_seconds", "reservoir_capacities_l",
+            "autopilot", "thresholds",
+        }
         sanitized = {key: value for key, value in updates.items() if key in allowed_top}
         stop_chemistry = False
         url_changed = False
@@ -1100,6 +1146,9 @@ class ControlCenter:
                 raise ValueError("poll_seconds doit être compris entre 0,5 et 30")
             if not 1 <= float(candidate["control_seconds"]) <= 60:
                 raise ValueError("control_seconds doit être compris entre 1 et 60")
+            for name, capacity in candidate["reservoir_capacities_l"].items():
+                if not 1 <= float(capacity) <= 10000000:
+                    raise ValueError(f"Capacité de réservoir invalide: {name}")
             if not 250 <= float(candidate["autopilot"]["target_core_temp"]) <= 390:
                 raise ValueError("La température cible doit être comprise entre 250 et 390 °C")
             target_boron = candidate["autopilot"].get("target_boron_ppm")

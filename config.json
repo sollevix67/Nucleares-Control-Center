@@ -5,6 +5,10 @@
   "poll_seconds": 2.0,
   "control_seconds": 5.0,
   "history_seconds": 3600,
+  "reservoir_capacities_l": {
+    "core_pool_tank": 100000.0,
+    "external_coolant": 200000.0
+  },
   "autopilot": {
     "auto_start": false,
     "target_core_temp": 330.0,

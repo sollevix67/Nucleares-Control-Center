@@ -75,10 +75,20 @@ class ControlTests(unittest.TestCase):
                 reservoir_ids = {item["id"] for item in center.derived["reservoirs"]}
                 self.assertIn("primary_cooling_tank", reservoir_ids)
                 self.assertIn("external_coolant", reservoir_ids)
+                reservoirs = {item["id"]: item for item in center.derived["reservoirs"]}
+                self.assertEqual(reservoirs["core_pool_tank"]["capacity"], 100000.0)
+                self.assertEqual(reservoirs["core_pool_tank"]["percent"], 80.0)
+                self.assertEqual(reservoirs["external_coolant"]["capacity"], 200000.0)
+                self.assertEqual(reservoirs["external_coolant"]["percent"], 75.0)
                 self.assertEqual(len(center.derived["generators"]["main"]), 3)
                 self.assertEqual(center.derived["generators"]["main"][0]["status"], "COUPLÉ")
                 self.assertEqual(len(center.derived["generators"]["emergency"]), 2)
                 emergency = center.derived["generators"]["emergency"]
+                self.assertTrue(emergency[0]["installed"])
+                self.assertEqual(emergency[0]["installation_status"], "INSTALLÉ")
+                low_fuel_state = dict(state)
+                low_fuel_state["EMERGENCY_GENERATOR_1_FUEL"] = 4.0
+                self.assertTrue(center._derive(low_fuel_state)["generators"]["emergency"][0]["installed"])
                 self.assertEqual(emergency[0]["status"], "ARRÊTÉ")
                 self.assertEqual(emergency[0]["mode"], "AUTOMATIQUE")
                 self.assertEqual(emergency[0]["fuel"], 486.0)
@@ -86,6 +96,30 @@ class ControlTests(unittest.TestCase):
                 self.assertEqual(emergency[0]["pressurizer"], "PRESSURISÉ")
                 self.assertEqual(emergency[1]["status"], "EN ATTENTE")
                 self.assertEqual(center.derived["chemical_reservoirs"], [])
+            finally:
+                app.DATA_DIR = old_data
+
+    def test_emergency_generators_are_shown_when_not_installed(self):
+        with MockServer() as mock, tempfile.TemporaryDirectory() as temp:
+            old_data = app.DATA_DIR; app.DATA_DIR = Path(temp)
+            try:
+                center = app.ControlCenter(self.config(mock.url))
+                state = dict(mock.plant.values)
+                state.update({
+                    "EMERGENCY_GENERATOR_1_STATUS": "NO INSTALADO",
+                    "EMERGENCY_GENERATOR_1_MODE": None,
+                    "EMERGENCY_GENERATOR_1_PRESSURIZER": None,
+                    "EMERGENCY_GENERATOR_1_FUEL": None,
+                })
+                for name in list(state):
+                    if name.startswith("EMERGENCY_GENERATOR_2_"):
+                        state[name] = None
+                emergency = center._derive(state)["generators"]["emergency"]
+                self.assertEqual(len(emergency), 2)
+                self.assertFalse(emergency[0]["installed"])
+                self.assertFalse(emergency[1]["installed"])
+                self.assertEqual(emergency[0]["status"], "NON INSTALLÉ")
+                self.assertIsNone(emergency[0]["fuel"])
             finally:
                 app.DATA_DIR = old_data
 
@@ -322,9 +356,11 @@ class ControlTests(unittest.TestCase):
                 html = urllib.request.urlopen(base + "/").read().decode("utf-8")
                 self.assertIn("NUCLEARES", html); self.assertIn("autopilot-toggle", html)
                 self.assertIn("reservoir-list", html); self.assertIn("main-generator-list", html)
+                self.assertIn("pool-capacity", html); self.assertIn("external-capacity", html)
                 javascript = urllib.request.urlopen(base + "/app.js").read().decode("utf-8")
                 self.assertIn("d.vacuum_pct", javascript)
                 self.assertIn('generator.fuel_unit || "L"', javascript)
+                self.assertIn("generator.installation_status", javascript)
                 request = urllib.request.Request(base + "/api/autopilot", data=b'{"enabled":true}',
                                                  headers={"Content-Type": "application/json"}, method="POST")
                 response = json.load(urllib.request.urlopen(request))
