@@ -146,6 +146,50 @@ class ControlTests(unittest.TestCase):
             finally:
                 app.DATA_DIR = old_data
 
+    def test_installed_train_tracks_demand_without_secondary_pump(self):
+        with MockServer() as mock, tempfile.TemporaryDirectory() as temp:
+            old_data = app.DATA_DIR; app.DATA_DIR = Path(temp)
+            try:
+                center = app.ControlCenter(self.config(mock.url))
+                center.readable, center.writable = center.client.discover()
+                state = center.client.batch_get(center.readable)
+                state.update({
+                    "POWER_DEMAND_MW": 80.0,
+                    "GENERATOR_0_KW": 40000.0,
+                    "MSCV_0_OPENING_ACTUAL": 8.0,
+                    "STEAM_TURBINE_0_BYPASS_ACTUAL": 0.0,
+                    "STEAM_TURBINE_0_INSTALLED": True,
+                    "STEAM_GEN_0_STATUS": 2,
+                    "COOLANT_SEC_CIRCULATION_PUMP_0_STATUS": 4,
+                })
+                for index in (1, 2):
+                    state[f"STEAM_TURBINE_{index}_INSTALLED"] = False
+                    state[f"STEAM_GEN_{index}_STATUS"] = 4
+
+                center._control_grid(state, 5.0, secondary=True)
+                commands = dict(mock.plant.commands)
+                self.assertGreater(commands["MSCV_0_OPENING_ORDERED"], state["MSCV_0_OPENING_ACTUAL"])
+                self.assertEqual(commands["STEAM_TURBINE_0_BYPASS_ORDERED"], 0.0)
+                self.assertNotIn("COOLANT_SEC_CIRCULATION_PUMP_0_ORDERED_SPEED", commands)
+                self.assertNotIn("MSCV_1_OPENING_ORDERED", commands)
+                self.assertNotIn("MSCV_2_OPENING_ORDERED", commands)
+
+                with mock.plant.lock:
+                    mock.plant.commands.clear()
+                center.last_write.clear()
+                center.train_pid[0].reset()
+                state.update({
+                    "POWER_DEMAND_MW": 40.0,
+                    "GENERATOR_0_KW": 90000.0,
+                    "MSCV_0_OPENING_ACTUAL": 12.0,
+                })
+                center._control_grid(state, 5.0, secondary=False)
+                commands = dict(mock.plant.commands)
+                self.assertLess(commands["MSCV_0_OPENING_ORDERED"], state["MSCV_0_OPENING_ACTUAL"])
+                self.assertEqual(commands["STEAM_TURBINE_0_BYPASS_ORDERED"], 0.0)
+            finally:
+                app.DATA_DIR = old_data
+
     def test_chemistry_captures_current_ppm(self):
         with MockServer(chemistry_enabled=True) as mock, tempfile.TemporaryDirectory() as temp:
             old_data = app.DATA_DIR; app.DATA_DIR = Path(temp)

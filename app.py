@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-APP_VERSION = "0.3.2"
+APP_VERSION = "0.3.3"
 BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 USER_ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 STATIC_DIR = BUNDLE_ROOT / "static"
@@ -503,8 +503,6 @@ class ControlCenter:
             return False
         if self._status_not_installed(s.get(f"STEAM_GEN_{index}_STATUS")):
             return False
-        if self._status_not_installed(s.get(f"COOLANT_SEC_CIRCULATION_PUMP_{index}_STATUS")):
-            return False
         if installed_name in s and installed_raw is not None:
             return bool(installed_raw)
         return any(
@@ -899,8 +897,11 @@ class ControlCenter:
             self._write("production", f"MSCV_{i}_OPENING_ORDERED", round(new_mscv, 2),
                         f"Suivi réseau, cible {target_each / 1000:.1f} MW")
             bypass = f"STEAM_TURBINE_{i}_BYPASS_ORDERED"
-            if bypass in self.writable and as_number(s.get(f"STEAM_TURBINE_{i}_BYPASS_ACTUAL")) > 1.0:
-                self._write("production", bypass, 0.0, "Bypass fermé en régime normal")
+            if bypass in self.writable:
+                self._write(
+                    "production", bypass, 0.0,
+                    "Bypass maintenu fermé — puissance régulée par MSCV", cooldown=30,
+                )
             if secondary:
                 pump = f"COOLANT_SEC_CIRCULATION_PUMP_{i}_ORDERED_SPEED"
                 level = as_number(s.get(f"COOLANT_SEC_{i}_LIQUID_VOLUME"))

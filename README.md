@@ -48,7 +48,7 @@ Pour simuler également un module chimique installé, lancer `python mock_game.p
 | Cœur | Température par position des barres, prise en compte de la criticité |
 | Sécurité | SCRAM automatique au seuil critique, pompes primaires à 90 % |
 | Production | Répartition de la demande réseau entre les groupes disponibles |
-| Turbines | Régulation progressive des MSCV et fermeture du bypass en régime normal |
+| Turbines | Régulation progressive de la puissance par les MSCV et maintien du bypass fermé à 0 % |
 | Secondaire | Débit des pompes selon la vapeur et le niveau des générateurs |
 | Condenseur | Remplissage entre 45 et 60 %, pompe à vide, circulation à 25 % |
 | Rétention | Vidange automatique entre 75 et 50 % |
@@ -56,7 +56,9 @@ Pour simuler également un module chimique installé, lancer `python mock_game.p
 | Primaire | Appoint d’eau entre 80 et 90 % |
 | Chimie | Détection optionnelle du module, maintien du bore par dosage/filtration, sécurités des pompes |
 
-Le pilote ne commande que les variables annoncées comme accessibles en écriture par la version courante du jeu. Pour les circuits indexés, cette vérification est complétée par `STEAM_TURBINE_*_INSTALLED` et par l’état des générateurs de vapeur et des pompes : une tranche ou une pompe marquée `NOT_INSTALLED` ne reçoit aucune commande MSCV, bypass ou débit, même si son endpoint POST figure dans la liste globale. Une commande absente est ignorée et inscrite dans le journal. Les opérations qui exigent encore une interaction physique du personnage dans le jeu ne peuvent pas être automatisées par le webserveur.
+Le pilote ne commande que les variables annoncées comme accessibles en écriture par la version courante du jeu. Pour les circuits indexés, cette vérification est complétée par `STEAM_TURBINE_*_INSTALLED` et par l’état du générateur de vapeur. Une tranche marquée `NOT_INSTALLED` ne reçoit aucune commande MSCV ou bypass. Les pompes primaires et secondaires sont filtrées séparément par leur propre état : l’absence d’une pompe ne désactive donc plus par erreur une turbine installée. Une commande absente est ignorée et inscrite dans le journal. Les opérations qui exigent encore une interaction physique du personnage dans le jeu ne peuvent pas être automatisées par le webserveur.
+
+En suivi réseau, les MSCV modulent la puissance vers la demande augmentée de la marge configurée. Les bypass de turbine ne servent pas de régulateur continu : ils sont explicitement maintenus à `0 %` pour envoyer la vapeur disponible vers la turbine. Pour viser exactement la demande affichée, régler **Marge réseau** à `0 MW`.
 
 ### Réservoirs et générateurs dans Supervision
 

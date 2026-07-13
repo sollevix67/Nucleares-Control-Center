@@ -67,7 +67,7 @@ function isNotInstalled(value) {
 function trainInstalled(s, i) {
   const flag = s[`STEAM_TURBINE_${i}_INSTALLED`];
   if (flag !== null && flag !== undefined && !Boolean(flag)) return false;
-  if (isNotInstalled(s[`STEAM_GEN_${i}_STATUS`]) || isNotInstalled(s[`COOLANT_SEC_CIRCULATION_PUMP_${i}_STATUS`])) return false;
+  if (isNotInstalled(s[`STEAM_GEN_${i}_STATUS`])) return false;
   return flag !== null && flag !== undefined ? Boolean(flag) : s[`GENERATOR_${i}_KW`] !== undefined || s[`STEAM_TURBINE_${i}_RPM`] !== undefined;
 }
 
