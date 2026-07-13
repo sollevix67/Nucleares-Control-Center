@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-APP_VERSION = "0.3.4"
+APP_VERSION = "0.4.0"
 BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 USER_ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 STATIC_DIR = BUNDLE_ROOT / "static"
@@ -59,6 +59,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "boron_deadband_ppm": 5.0,
         "boron_max_output_pct": 20.0,
         "boron_gain_pct_per_ppm": 0.5,
+        "xenon_power_ramp_mw_per_min": 10.0,
+        "xenon_temp_ramp_c_per_cycle": 0.15,
         "areas": {
             "reactor": True,
             "grid": True,
@@ -68,6 +70,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "pressurizer": True,
             "primary_makeup": True,
             "chemistry": True,
+            "poisons": True,
         },
     },
     "thresholds": {
@@ -81,6 +84,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "vacuum_low": 50.0,
         "primary_level_low": 75.0,
         "retention_high": 75.0,
+        "xenon_warning_ratio": 1.25,
+        "xenon_critical_ratio": 1.50,
+        "xenon_rise_guard_pct_per_min": 0.50,
     },
 }
 
@@ -400,6 +406,7 @@ class ControlCenter:
     RETENTION_MAX = 40000.0
     CHEM_DOSAGE_COMMAND = "CHEM_BORON_DOSAGE_ORDERED_RATE"
     CHEM_FILTER_COMMAND = "CHEM_BORON_FILTER_ORDERED_SPEED"
+    POISON_ISOTOPES = ("IODINE", "XENON")
 
     def __init__(self, config: dict[str, Any]):
         self.config = config
@@ -427,6 +434,10 @@ class ControlCenter:
         self.dynamic_temp_setpoint = float(config["autopilot"]["target_core_temp"])
         configured_boron = config["autopilot"].get("target_boron_ppm")
         self.dynamic_boron_target: float | None = None if configured_boron is None else float(configured_boron)
+        self.poison_baseline: dict[str, float] = {}
+        self.poison_previous: dict[str, tuple[float, float]] = {}
+        self.poison_trends: dict[str, float] = {}
+        self.filtered_grid_target_kw: float | None = None
         self.train_pid = {i: PID(0.00002, 0.000002, 0.0, -0.3, 0.2) for i in range(3)}
         self.secondary_pid = {i: PID(0.0005, 0.00005, 0.001, -2.0, 2.0) for i in range(3)}
         self.threads: list[threading.Thread] = []
@@ -455,6 +466,7 @@ class ControlCenter:
                     self.store.record_event("connexion", f"{len(self.readable)} mesures et {len(self.writable)} commandes détectées")
                 state = self.client.batch_get(self.readable)
                 with self.lock:
+                    self._update_poison_tracking(state)
                     self.state = state
                     self.derived = self._derive(state)
                     self.connected = True
@@ -549,6 +561,86 @@ class ControlCenter:
         ):
             return False
         return any(value is not None for value in values)
+
+    def _update_poison_tracking(self, s: dict[str, Any], now: float | None = None) -> None:
+        timestamp = time.monotonic() if now is None else float(now)
+        for isotope in self.POISON_ISOTOPES:
+            name = f"CORE_{isotope}_CUMULATIVE"
+            raw = s.get(name)
+            if raw is None:
+                continue
+            value = as_number(raw)
+            previous = self.poison_previous.get(isotope)
+            if previous is not None:
+                previous_value, previous_time = previous
+                elapsed = timestamp - previous_time
+                if elapsed > 0:
+                    self.poison_trends[isotope] = (value - previous_value) / elapsed * 60.0
+            else:
+                self.poison_trends[isotope] = 0.0
+            self.poison_previous[isotope] = (value, timestamp)
+            if isotope not in self.poison_baseline and abs(value) > 1e-9:
+                self.poison_baseline[isotope] = value
+
+    def _poison_info(self, s: dict[str, Any]) -> dict[str, Any]:
+        def isotope_info(isotope: str) -> dict[str, Any]:
+            generation_raw = s.get(f"CORE_{isotope}_GENERATION")
+            cumulative_raw = s.get(f"CORE_{isotope}_CUMULATIVE")
+            generation = None if generation_raw is None else as_number(generation_raw)
+            cumulative = None if cumulative_raw is None else as_number(cumulative_raw)
+            baseline = self.poison_baseline.get(isotope)
+            ratio = None if cumulative is None or not baseline else cumulative / baseline
+            trend = self.poison_trends.get(isotope)
+            trend_pct = None if trend is None or not baseline else trend / abs(baseline) * 100.0
+            return {
+                "generation": None if generation is None else round(generation, 6),
+                "cumulative": None if cumulative is None else round(cumulative, 6),
+                "baseline": None if baseline is None else round(baseline, 6),
+                "ratio": None if ratio is None else round(ratio, 4),
+                "trend_per_min": None if trend is None else round(trend, 6),
+                "trend_pct_per_min": None if trend_pct is None else round(trend_pct, 3),
+            }
+
+        iodine = isotope_info("IODINE")
+        xenon = isotope_info("XENON")
+        available = any(
+            item[key] is not None
+            for item in (iodine, xenon)
+            for key in ("generation", "cumulative")
+        )
+        warning_ratio = float(self.config["thresholds"]["xenon_warning_ratio"])
+        critical_ratio = float(self.config["thresholds"]["xenon_critical_ratio"])
+        rise_guard = float(self.config["thresholds"]["xenon_rise_guard_pct_per_min"])
+        xenon_ratio = xenon["ratio"]
+        rising_fast = any(
+            item["trend_pct_per_min"] is not None and item["trend_pct_per_min"] >= rise_guard
+            for item in (iodine, xenon)
+        )
+        guard_active = available and (
+            rising_fast or (xenon_ratio is not None and xenon_ratio >= warning_ratio)
+        )
+        if not available:
+            status, status_class = "INDISPONIBLE", ""
+            message = "Variables xénon/iode non exposées par le jeu"
+        elif xenon_ratio is not None and xenon_ratio >= critical_ratio:
+            status, status_class = "ÉLEVÉ", "danger"
+            message = "Xénon fortement supérieur à la référence — rampes limitées"
+        elif guard_active:
+            status, status_class = "SURVEILLANCE", "warn"
+            message = "Évolution des poisons détectée — variations de puissance ralenties"
+        else:
+            status, status_class = "STABLE", "ok"
+            message = "Évolution compatible avec la référence apprise"
+        return {
+            "available": available,
+            "status": status,
+            "status_class": status_class,
+            "message": message,
+            "guard_active": guard_active,
+            "management_enabled": bool(self.config["autopilot"]["areas"].get("poisons", True)),
+            "iodine": iodine,
+            "xenon": xenon,
+        }
 
     def _derive(self, s: dict[str, Any]) -> dict[str, Any]:
         def optional_number(name: str) -> float | None:
@@ -694,6 +786,7 @@ class ControlCenter:
             "reservoirs": reservoirs,
             "chemical_reservoirs": chemical_reservoirs,
             "generators": {"main": main_generators, "emergency": emergency_generators},
+            "poisons": self._poison_info(s),
         }
 
     def _set_alarm(self, alarm_id: str, severity: str, title: str, detail: str, active: bool) -> None:
@@ -735,6 +828,16 @@ class ControlCenter:
                         "CONDENSER_VACUUM" in s and vacuum < t["vacuum_low"])
         self._set_alarm("primary_level", "critical", "Niveau circuit primaire bas", f"{primary:.1f} %",
                         "COOLANT_CORE_PRIMARY_LOOP_LEVEL" in s and primary < t["primary_level_low"])
+
+        poisons = self.derived.get("poisons", {})
+        xenon_ratio = poisons.get("xenon", {}).get("ratio")
+        xenon_alarm = xenon_ratio is not None and xenon_ratio >= t["xenon_warning_ratio"]
+        xenon_severity = "critical" if xenon_ratio is not None and xenon_ratio >= t["xenon_critical_ratio"] else "warning"
+        self._set_alarm(
+            "xenon_high", xenon_severity, "Accumulation de xénon élevée",
+            "indisponible" if xenon_ratio is None else f"{xenon_ratio * 100:.1f} % de la référence apprise",
+            xenon_alarm,
+        )
 
         chemistry = self._chemistry_info(s)
         for name, value in s.items():
@@ -922,11 +1025,24 @@ class ControlCenter:
         demand = as_number(s.get("POWER_DEMAND_MW")) * 1000.0
         buffer_kw = float(self.config["autopilot"]["grid_buffer_mw"]) * 1000.0
         cap = float(self.config["autopilot"]["train_power_cap_kw"])
-        target_each = min(cap, (demand + buffer_kw) / len(installed))
         total_power = sum(as_number(s.get(f"GENERATOR_{i}_KW")) for i in installed)
-        total_error = demand + buffer_kw - total_power
+        desired_total = demand + buffer_kw
+        poisons = self.derived.get("poisons", {})
+        poison_guard = bool(self.config["autopilot"]["areas"].get("poisons", True)) and bool(poisons.get("guard_active"))
+        if poison_guard:
+            if self.filtered_grid_target_kw is None:
+                self.filtered_grid_target_kw = total_power
+            ramp_kw = float(self.config["autopilot"]["xenon_power_ramp_mw_per_min"]) * 1000.0 * max(dt, 0.1) / 60.0
+            target_delta = max(-ramp_kw, min(ramp_kw, desired_total - self.filtered_grid_target_kw))
+            self.filtered_grid_target_kw += target_delta
+        else:
+            self.filtered_grid_target_kw = desired_total
+        controlled_total = self.filtered_grid_target_kw
+        target_each = min(cap, controlled_total / len(installed))
+        total_error = controlled_total - total_power
         if self.config["autopilot"].get("grid_follow", True):
-            step = max(-0.5, min(0.5, total_error * 0.00002))
+            step_limit = float(self.config["autopilot"]["xenon_temp_ramp_c_per_cycle"]) if poison_guard else 0.5
+            step = max(-step_limit, min(step_limit, total_error * 0.00002))
             self.dynamic_temp_setpoint = max(306.0, min(375.0, self.dynamic_temp_setpoint + step))
         for i in installed:
             power = as_number(s.get(f"GENERATOR_{i}_KW"))
@@ -1123,6 +1239,7 @@ class ControlCenter:
                 for pid in [*self.train_pid.values(), *self.secondary_pid.values()]:
                     pid.reset()
                 self.dynamic_temp_setpoint = float(self.config["autopilot"]["target_core_temp"])
+                self.filtered_grid_target_kw = None
                 if self.config["autopilot"].get("target_boron_ppm") is None:
                     self.dynamic_boron_target = None
         if not enabled:
@@ -1158,6 +1275,16 @@ class ControlCenter:
                 raise ValueError("La bande morte du bore doit être comprise entre 0,1 et 1 000 ppm")
             if not 1 <= float(candidate["autopilot"]["boron_max_output_pct"]) <= 100:
                 raise ValueError("La puissance chimique maximale doit être comprise entre 1 et 100 %")
+            if not 0.1 <= float(candidate["autopilot"]["xenon_power_ramp_mw_per_min"]) <= 100:
+                raise ValueError("La rampe anti-xénon doit être comprise entre 0,1 et 100 MW/min")
+            if not 0.01 <= float(candidate["autopilot"]["xenon_temp_ramp_c_per_cycle"]) <= 0.5:
+                raise ValueError("La rampe thermique anti-xénon doit être comprise entre 0,01 et 0,5 °C/cycle")
+            warning_ratio = float(candidate["thresholds"]["xenon_warning_ratio"])
+            critical_ratio = float(candidate["thresholds"]["xenon_critical_ratio"])
+            if not 1.0 <= warning_ratio < critical_ratio <= 10.0:
+                raise ValueError("Les seuils xénon doivent vérifier 1 ≤ avertissement < critique ≤ 10")
+            if not 0.01 <= float(candidate["thresholds"]["xenon_rise_guard_pct_per_min"]) <= 100:
+                raise ValueError("Le seuil de hausse xénon doit être compris entre 0,01 et 100 %/min")
             self.config = candidate
             stop_chemistry = self.autopilot_enabled and old_chemistry and not bool(candidate["autopilot"]["areas"].get("chemistry"))
             if stop_chemistry:

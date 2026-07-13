@@ -327,6 +327,52 @@ class ControlTests(unittest.TestCase):
             finally:
                 app.DATA_DIR = old_data
 
+    def test_xenon_tracking_raises_alarm_and_enables_guard(self):
+        with MockServer() as mock, tempfile.TemporaryDirectory() as temp:
+            old_data = app.DATA_DIR; app.DATA_DIR = Path(temp)
+            try:
+                center = app.ControlCenter(self.config(mock.url))
+                state = dict(mock.plant.values)
+                center._update_poison_tracking(state, now=100.0)
+                state["CORE_XENON_CUMULATIVE"] = 12.4
+                state["CORE_IODINE_CUMULATIVE"] = 13.2
+                center._update_poison_tracking(state, now=160.0)
+                center.derived = center._derive(state)
+                poisons = center.derived["poisons"]
+                self.assertTrue(poisons["available"])
+                self.assertTrue(poisons["guard_active"])
+                self.assertAlmostEqual(poisons["xenon"]["ratio"], 1.55)
+                self.assertGreater(poisons["xenon"]["trend_per_min"], 0)
+                center._evaluate_alarms(state)
+                self.assertIn("xenon_high", center.alarms)
+                self.assertEqual(center.alarms["xenon_high"].severity, "critical")
+            finally:
+                app.DATA_DIR = old_data
+
+    def test_xenon_guard_limits_power_target_ramp_without_fun_commands(self):
+        with MockServer() as mock, tempfile.TemporaryDirectory() as temp:
+            old_data = app.DATA_DIR; app.DATA_DIR = Path(temp)
+            try:
+                center = app.ControlCenter(self.config(mock.url))
+                center.readable, center.writable = center.client.discover()
+                state = center.client.batch_get(center.readable)
+                state.update({
+                    "POWER_DEMAND_MW": 120.0,
+                    "GENERATOR_0_KW": 40000.0,
+                    "STEAM_TURBINE_0_INSTALLED": True,
+                    "STEAM_GEN_0_STATUS": 2,
+                })
+                for index in (1, 2):
+                    state[f"STEAM_TURBINE_{index}_INSTALLED"] = False
+                    state[f"STEAM_GEN_{index}_STATUS"] = 4
+                center.derived = {"poisons": {"guard_active": True}}
+                center._control_grid(state, 5.0, secondary=False)
+                self.assertAlmostEqual(center.filtered_grid_target_kw, 40833.3333, places=3)
+                self.assertTrue(mock.plant.commands)
+                self.assertFalse(any(name.startswith("FUN_") for name, _ in mock.plant.commands))
+            finally:
+                app.DATA_DIR = old_data
+
     def test_scram(self):
         with MockServer() as mock, tempfile.TemporaryDirectory() as temp:
             old_data = app.DATA_DIR; app.DATA_DIR = Path(temp)
@@ -357,10 +403,16 @@ class ControlTests(unittest.TestCase):
                 self.assertIn("NUCLEARES", html); self.assertIn("autopilot-toggle", html)
                 self.assertIn("reservoir-list", html); self.assertIn("main-generator-list", html)
                 self.assertIn("pool-capacity", html); self.assertIn("external-capacity", html)
+                self.assertIn('data-supervision-zone="reactor"', html)
+                self.assertIn('data-supervision-zone="chemistry"', html)
+                self.assertIn('id="poison-chart"', html)
+                self.assertIn('id="xenon-power-ramp"', html)
                 javascript = urllib.request.urlopen(base + "/app.js").read().decode("utf-8")
                 self.assertIn("d.vacuum_pct", javascript)
                 self.assertIn('generator.fuel_unit || "L"', javascript)
                 self.assertIn("generator.installation_status", javascript)
+                self.assertIn("switchSupervisionZone", javascript)
+                self.assertIn("renderPoisons", javascript)
                 request = urllib.request.Request(base + "/api/autopilot", data=b'{"enabled":true}',
                                                  headers={"Content-Type": "application/json"}, method="POST")
                 response = json.load(urllib.request.urlopen(request))

@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 const fmt = (value, digits = 1) => value === null || value === undefined || Number.isNaN(Number(value)) ? "—" : Number(value).toFixed(digits);
-const state = { snapshot: null, history: {}, lastAlarmIds: new Set(), chartTimer: 0 };
+const state = { snapshot: null, history: {}, lastAlarmIds: new Set(), chartTimer: 0, supervisionZone: "synthesis" };
 const GAME_TEXT_FR = {
   ACTIVE:"ACTIF",ACTIVO:"ACTIF",ACTIVA:"ACTIVE",INACTIVE:"INACTIF",INACTIVO:"INACTIF",INACTIVA:"INACTIVE",
   OPERATIVE:"OPÉRATIONNEL",OPERATIONAL:"OPÉRATIONNEL",OPERATIVO:"OPÉRATIONNEL",
@@ -17,7 +17,7 @@ const AREA_LABELS = {
   reactor: "Régulation du cœur", grid: "Suivi de la demande réseau", secondary: "Circuits secondaires",
   condenser: "Condenseur et vide", retention: "Réservoir de rétention",
   pressurizer: "Pressuriseur", primary_makeup: "Appoint circuit primaire",
-  chemistry: "Chimie et bore (si installé)"
+  chemistry: "Chimie et bore (si installé)", poisons: "Protection xénon et iode"
 };
 
 function showToast(message, error = false) {
@@ -43,6 +43,25 @@ function switchView(name) {
 
 document.querySelectorAll(".nav-button").forEach(button => button.addEventListener("click", () => switchView(button.dataset.view)));
 document.querySelectorAll("[data-open]").forEach(button => button.addEventListener("click", () => switchView(button.dataset.open)));
+
+function switchSupervisionZone(zone) {
+  state.supervisionZone = zone;
+  document.querySelectorAll("[data-supervision-zone]").forEach(button => button.classList.toggle("active", button.dataset.supervisionZone === zone));
+  document.querySelectorAll("#view-overview [data-supervision-zones]").forEach(panel => {
+    panel.classList.toggle("zone-hidden", !panel.dataset.supervisionZones.split(" ").includes(zone));
+  });
+  document.querySelectorAll(".systems-panel .system-row").forEach(row => {
+    const hide = (zone === "chemistry" && row.dataset.system !== "chemistry") || (zone === "fluids" && row.dataset.system === "chemistry");
+    row.classList.toggle("zone-filter-hidden", hide);
+  });
+  $("reservoir-list").classList.toggle("zone-filter-hidden", zone === "chemistry");
+  $("chemical-reservoir-section").classList.toggle("zone-filter-hidden", zone === "fluids");
+  $("main-generator-list").classList.toggle("zone-filter-hidden", zone === "emergency");
+  $("emergency-generator-section").classList.toggle("zone-filter-hidden", zone === "production");
+  requestAnimationFrame(() => { drawChart(); drawPoisonChart(); });
+}
+
+document.querySelectorAll("[data-supervision-zone]").forEach(button => button.addEventListener("click", () => switchSupervisionZone(button.dataset.supervisionZone)));
 
 function statusClass(value, warning, critical, inverse = false) {
   if (value === null || value === undefined) return "";
@@ -133,6 +152,22 @@ function renderGenerators(generators) {
   }
 }
 
+function renderPoisons(poisons = {}) {
+  const iodine = poisons.iodine || {}, xenon = poisons.xenon || {};
+  const trend = item => item.trend_per_min === null || item.trend_per_min === undefined ? "—" : `${item.trend_per_min >= 0 ? "+" : ""}${fmt(item.trend_per_min,3)} /min`;
+  $("iodine-generation").textContent = fmt(iodine.generation,3);
+  $("iodine-cumulative").textContent = fmt(iodine.cumulative,3);
+  $("iodine-trend").textContent = trend(iodine);
+  $("xenon-generation").textContent = fmt(xenon.generation,3);
+  $("xenon-cumulative").textContent = fmt(xenon.cumulative,3);
+  $("xenon-trend").textContent = trend(xenon);
+  $("poison-status").textContent = poisons.status || "INDISPONIBLE";
+  $("poison-status").className = `status-pill ${poisons.status_class || ""}`;
+  $("poison-message").textContent = poisons.message || "Variables indisponibles";
+  $("poison-guard").textContent = !poisons.management_enabled ? "DÉSACTIVÉE" : poisons.guard_active ? "ACTIVE — RAMPES LIMITÉES" : "EN VEILLE";
+  $("poison-guard").className = poisons.guard_active ? "warn-text" : poisons.management_enabled ? "ok-text" : "";
+}
+
 function renderAlarms(alarms) {
   const count = $("alarm-count"); count.textContent = alarms.length; count.classList.toggle("hot", alarms.length > 0);
   const html = alarms.length ? alarms.map(a => `<div class="alarm-item ${a.severity}"><i></i><div><strong>${escapeHtml(a.title)}</strong><span>${escapeHtml(a.detail)}</span></div><time>${new Date(a.since).toLocaleTimeString()}</time><button data-ack="${escapeHtml(a.alarm_id)}">${a.acknowledged ? "ACQUITTÉE" : "ACQUITTER"}</button></div>`).join("") : '<div class="empty">Aucune alarme active</div>';
@@ -182,7 +217,7 @@ function render(snapshot) {
   $("chemistry-status").className = `status-pill ${chemistry.status === 'ready' ? 'ok' : chemistry.status === 'fault' ? 'danger' : chemistry.status === 'read_only' ? 'warn' : ''}`;
   $("chemistry-detail").textContent = chemistry.message || 'État inconnu';
   $("boron-ppm").textContent = `${fmt(chemistry.ppm)} ppm`;
-  renderReservoirs(d, chemistry); renderGenerators(d.generators || {});
+  renderReservoirs(d, chemistry); renderGenerators(d.generators || {}); renderPoisons(d.poisons || {});
   renderAlarms(snapshot.alarms || []); renderJournal(snapshot.actions || []);
 }
 
@@ -196,7 +231,22 @@ function drawChart() {
   series.forEach((points,index)=>{ctx.strokeStyle=colors[index];ctx.lineWidth=1.7;ctx.beginPath();points.forEach((p,i)=>{const x=(p[0]-minT)/Math.max(1,maxT-minT)*w, y=h-12-(p[1]/maxV)*(h-28);i?ctx.lineTo(x,y):ctx.moveTo(x,y)});ctx.stroke();});
 }
 
-async function refreshHistory() { try { state.history = await api('/api/history?variables=GENERATOR_0_KW,GENERATOR_1_KW,GENERATOR_2_KW&seconds=1800'); drawChart(); } catch (_) {} }
+function drawPoisonChart() {
+  const canvas = $("poison-chart"); if (!canvas) return;
+  const rect = canvas.getBoundingClientRect(); if (!rect.width) return;
+  const ctx = canvas.getContext("2d"), ratio = devicePixelRatio || 1;
+  canvas.width = Math.max(300, rect.width * ratio); canvas.height = 130 * ratio; ctx.scale(ratio, ratio);
+  const w = rect.width, h = 130; ctx.clearRect(0,0,w,h); ctx.strokeStyle = "#20302b"; ctx.lineWidth = 1;
+  for(let y=18;y<h;y+=28){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke();}
+  const series = [state.history.CORE_IODINE_CUMULATIVE || [], state.history.CORE_XENON_CUMULATIVE || []];
+  const all = series.flat(); if(!all.length) return;
+  const minT=Math.min(...all.map(p=>p[0])), maxT=Math.max(...all.map(p=>p[0]));
+  const minV=Math.min(...all.map(p=>p[1])), maxV=Math.max(...all.map(p=>p[1]));
+  const span=Math.max(0.000001,maxV-minV), colors=["#f2b94b","#58a6ff"];
+  series.forEach((points,index)=>{ctx.strokeStyle=colors[index];ctx.lineWidth=1.8;ctx.beginPath();points.forEach((p,i)=>{const x=(p[0]-minT)/Math.max(1,maxT-minT)*w,y=h-10-((p[1]-minV)/span)*(h-24);i?ctx.lineTo(x,y):ctx.moveTo(x,y)});ctx.stroke();});
+}
+
+async function refreshHistory() { try { state.history = await api('/api/history?variables=GENERATOR_0_KW,GENERATOR_1_KW,GENERATOR_2_KW,CORE_IODINE_CUMULATIVE,CORE_XENON_CUMULATIVE&seconds=1800'); drawChart(); drawPoisonChart(); } catch (_) {} }
 async function refresh() { try { render(await api('/api/state')); } catch (err) { $("connection-dot").className="bad"; $("connection-label").textContent="APPLICATION INDISPONIBLE"; } }
 
 function confirmAction(title, copy, danger = true) {
@@ -214,10 +264,10 @@ async function acknowledge(id){try{await api('/api/ack',{method:'POST',body:JSON
 let searchTimer; $("variable-search").addEventListener("input",()=>{clearTimeout(searchTimer);searchTimer=setTimeout(loadVariables,180)});
 async function loadVariables(){try{const data=await api(`/api/variables?q=${encodeURIComponent($("variable-search").value)}`);$("variable-rows").innerHTML=data.variables.map(v=>`<tr><td>${escapeHtml(v.name)}</td><td>${escapeHtml(String(v.value ?? '—'))}</td><td><span class="tag ${v.writable?'write':''}">${v.writable?'LECTURE / ÉCRITURE':'LECTURE'}</span></td></tr>`).join('');}catch(err){showToast(err.message,true);}}
 
-async function loadSettings(){try{const c=await api('/api/config');$("game-url").value=c.game_url;$("poll-seconds").value=c.poll_seconds;$("control-seconds").value=c.control_seconds;$("pool-capacity").value=c.reservoir_capacities_l.core_pool_tank;$("external-capacity").value=c.reservoir_capacities_l.external_coolant;$("target-temp").value=c.autopilot.target_core_temp;$("grid-buffer").value=c.autopilot.grid_buffer_mw;$("target-boron").value=c.autopilot.target_boron_ppm ?? '';$("boron-deadband").value=c.autopilot.boron_deadband_ppm;$("boron-max-output").value=c.autopilot.boron_max_output_pct;$("area-toggles").innerHTML=Object.entries(AREA_LABELS).map(([key,label])=>`<label class="area-check"><input type="checkbox" data-area="${key}" ${c.autopilot.areas[key]?'checked':''}>${label}</label>`).join('');}catch(err){showToast(err.message,true);}}
-$("settings-form").addEventListener("submit",async e=>{e.preventDefault();const areas={};document.querySelectorAll('[data-area]').forEach(i=>areas[i.dataset.area]=i.checked);const targetBoron=$("target-boron").value.trim();const payload={game_url:$("game-url").value,poll_seconds:Number($("poll-seconds").value),control_seconds:Number($("control-seconds").value),reservoir_capacities_l:{core_pool_tank:Number($("pool-capacity").value),external_coolant:Number($("external-capacity").value)},autopilot:{target_core_temp:Number($("target-temp").value),grid_buffer_mw:Number($("grid-buffer").value),target_boron_ppm:targetBoron===''?null:Number(targetBoron),boron_deadband_ppm:Number($("boron-deadband").value),boron_max_output_pct:Number($("boron-max-output").value),areas}};try{await api('/api/config',{method:'POST',body:JSON.stringify(payload)});$("save-status").textContent='Réglages enregistrés';showToast('Configuration enregistrée');setTimeout(()=>$("save-status").textContent='',2500);}catch(err){showToast(err.message,true);}});
+async function loadSettings(){try{const c=await api('/api/config');$("game-url").value=c.game_url;$("poll-seconds").value=c.poll_seconds;$("control-seconds").value=c.control_seconds;$("pool-capacity").value=c.reservoir_capacities_l.core_pool_tank;$("external-capacity").value=c.reservoir_capacities_l.external_coolant;$("target-temp").value=c.autopilot.target_core_temp;$("grid-buffer").value=c.autopilot.grid_buffer_mw;$("target-boron").value=c.autopilot.target_boron_ppm ?? '';$("boron-deadband").value=c.autopilot.boron_deadband_ppm;$("boron-max-output").value=c.autopilot.boron_max_output_pct;$("xenon-warning-ratio").value=c.thresholds.xenon_warning_ratio;$("xenon-critical-ratio").value=c.thresholds.xenon_critical_ratio;$("xenon-rise-guard").value=c.thresholds.xenon_rise_guard_pct_per_min;$("xenon-power-ramp").value=c.autopilot.xenon_power_ramp_mw_per_min;$("xenon-temp-ramp").value=c.autopilot.xenon_temp_ramp_c_per_cycle;$("area-toggles").innerHTML=Object.entries(AREA_LABELS).map(([key,label])=>`<label class="area-check"><input type="checkbox" data-area="${key}" ${c.autopilot.areas[key]?'checked':''}>${label}</label>`).join('');}catch(err){showToast(err.message,true);}}
+$("settings-form").addEventListener("submit",async e=>{e.preventDefault();const areas={};document.querySelectorAll('[data-area]').forEach(i=>areas[i.dataset.area]=i.checked);const targetBoron=$("target-boron").value.trim();const payload={game_url:$("game-url").value,poll_seconds:Number($("poll-seconds").value),control_seconds:Number($("control-seconds").value),reservoir_capacities_l:{core_pool_tank:Number($("pool-capacity").value),external_coolant:Number($("external-capacity").value)},thresholds:{xenon_warning_ratio:Number($("xenon-warning-ratio").value),xenon_critical_ratio:Number($("xenon-critical-ratio").value),xenon_rise_guard_pct_per_min:Number($("xenon-rise-guard").value)},autopilot:{target_core_temp:Number($("target-temp").value),grid_buffer_mw:Number($("grid-buffer").value),target_boron_ppm:targetBoron===''?null:Number(targetBoron),boron_deadband_ppm:Number($("boron-deadband").value),boron_max_output_pct:Number($("boron-max-output").value),xenon_power_ramp_mw_per_min:Number($("xenon-power-ramp").value),xenon_temp_ramp_c_per_cycle:Number($("xenon-temp-ramp").value),areas}};try{await api('/api/config',{method:'POST',body:JSON.stringify(payload)});$("save-status").textContent='Réglages enregistrés';showToast('Configuration enregistrée');setTimeout(()=>$("save-status").textContent='',2500);}catch(err){showToast(err.message,true);}});
 
 function beep(){try{const audio=new AudioContext();const osc=audio.createOscillator(),gain=audio.createGain();osc.frequency.value=660;gain.gain.setValueAtTime(.04,audio.currentTime);gain.gain.exponentialRampToValueAtTime(.001,audio.currentTime+.18);osc.connect(gain).connect(audio.destination);osc.start();osc.stop(audio.currentTime+.18);}catch(_) {}}
 function escapeHtml(value){return String(value).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
 
-loadSettings(); refresh(); refreshHistory(); setInterval(refresh,1000); setInterval(refreshHistory,10000); window.addEventListener('resize',drawChart);
+switchSupervisionZone("synthesis"); loadSettings(); refresh(); refreshHistory(); setInterval(refresh,1000); setInterval(refreshHistory,10000); window.addEventListener('resize',()=>{drawChart();drawPoisonChart();});

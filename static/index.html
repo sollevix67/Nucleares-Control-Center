@@ -49,8 +49,17 @@
           <span id="connection-error">Démarrez le webserveur depuis la tablette du jeu.</span>
         </div>
 
+        <nav class="supervision-tabs" aria-label="Zones de supervision">
+          <button class="active" data-supervision-zone="synthesis">Synthèse</button>
+          <button data-supervision-zone="reactor">Réacteur</button>
+          <button data-supervision-zone="production">Production</button>
+          <button data-supervision-zone="fluids">Fluides</button>
+          <button data-supervision-zone="chemistry">Chimie</button>
+          <button data-supervision-zone="emergency">Secours</button>
+        </nav>
+
         <div class="overview-grid">
-          <article class="panel reactor-panel">
+          <article class="panel reactor-panel" data-supervision-zones="synthesis reactor">
             <header><div><span class="eyebrow">CŒUR DU RÉACTEUR</span><h1>État thermique</h1></div><span id="core-state" class="status-pill">—</span></header>
             <div class="reactor-main">
               <div class="temperature-ring" id="temp-ring">
@@ -75,7 +84,7 @@
             </div>
           </article>
 
-          <article class="panel power-panel">
+          <article class="panel power-panel" data-supervision-zones="synthesis production">
             <header><div><span class="eyebrow">RÉSEAU ÉLECTRIQUE</span><h1>Production</h1></div><span id="grid-status" class="status-pill">—</span></header>
             <div class="power-balance">
               <div><span>PRODUCTION</span><strong id="generated">—</strong><small>MW</small></div>
@@ -86,7 +95,17 @@
             <canvas id="power-chart" width="800" height="200" aria-label="Historique de production"></canvas>
           </article>
 
-          <article class="panel systems-panel">
+          <article class="panel poison-panel" data-supervision-zones="synthesis reactor chemistry">
+            <header><div><span class="eyebrow">POISONS NEUTRONIQUES</span><h1>Xénon et iode</h1></div><span id="poison-status" class="status-pill">—</span></header>
+            <div class="poison-grid">
+              <section><div class="isotope-symbol">I</div><div><span>IODE-135</span><strong id="iodine-cumulative">—</strong><small>indice cumulé</small></div><dl><div><dt>GÉNÉRATION</dt><dd id="iodine-generation">—</dd></div><div><dt>TENDANCE</dt><dd id="iodine-trend">—</dd></div></dl></section>
+              <section><div class="isotope-symbol xenon">Xe</div><div><span>XÉNON-135</span><strong id="xenon-cumulative">—</strong><small>indice cumulé</small></div><dl><div><dt>GÉNÉRATION</dt><dd id="xenon-generation">—</dd></div><div><dt>TENDANCE</dt><dd id="xenon-trend">—</dd></div></dl></section>
+            </div>
+            <div class="poison-protection"><div><span>PROTECTION AUTOMATIQUE</span><strong id="poison-guard">—</strong></div><p id="poison-message">Référence en cours d’apprentissage…</p></div>
+            <canvas id="poison-chart" width="800" height="160" aria-label="Historique du xénon et de l’iode"></canvas>
+          </article>
+
+          <article class="panel systems-panel" data-supervision-zones="synthesis fluids chemistry">
             <header><div><span class="eyebrow">AUXILIAIRES</span><h1>Bilans hydrauliques</h1></div><span class="live-label">LIVE</span></header>
             <div class="system-row" data-system="condenser">
               <div class="system-icon">C</div><div class="system-copy"><strong>Condenseur</strong><span id="condenser-detail">Niveau de remplissage</span></div>
@@ -114,12 +133,12 @@
             </div>
           </article>
 
-          <article class="panel alarm-panel">
+          <article class="panel alarm-panel" data-supervision-zones="synthesis">
             <header><div><span class="eyebrow">SURVEILLANCE</span><h1>Alarmes actives</h1></div><button class="text-button" data-open="alarms">Tout afficher</button></header>
             <div id="alarm-preview" class="alarm-list"><div class="empty">Aucune alarme active</div></div>
           </article>
 
-          <article class="panel reservoirs-panel">
+          <article class="panel reservoirs-panel" data-supervision-zones="synthesis fluids chemistry">
             <header><div><span class="eyebrow">INVENTAIRE HYDRAULIQUE</span><h1>Niveaux des réservoirs</h1></div><span class="live-label">LIVE</span></header>
             <div id="reservoir-list" class="reservoir-list"><div class="empty">Aucun niveau disponible</div></div>
             <section id="chemical-reservoir-section" class="chemical-reservoir-section hidden">
@@ -128,7 +147,7 @@
             </section>
           </article>
 
-          <article class="panel generators-panel">
+          <article class="panel generators-panel" data-supervision-zones="synthesis production emergency">
             <header><div><span class="eyebrow">PRODUCTION ET SECOURS</span><h1>État des générateurs</h1></div><span class="live-label">LIVE</span></header>
             <div id="main-generator-list" class="generator-list"><div class="empty">Aucun générateur détecté</div></div>
             <section id="emergency-generator-section" class="emergency-generator-section hidden">
@@ -173,6 +192,13 @@
             <header><h2>Capacités des réservoirs</h2></header>
             <p class="form-note">Le jeu publie les volumes mais pas leur capacité maximale. Ces valeurs règlent l’échelle des jauges.</p>
             <div class="form-row"><label>Piscine du cœur (L)<input id="pool-capacity" type="number" min="1" max="10000000" step="1000"></label><label>Réservoir externe (L)<input id="external-capacity" type="number" min="1" max="10000000" step="1000"></label></div>
+          </article>
+          <article class="panel form-panel">
+            <header><h2>Gestion xénon et iode</h2></header>
+            <p class="form-note">Les valeurs sont relatives à la référence apprise au démarrage. La protection ralentit les variations de puissance sans utiliser les commandes FUN_*.</p>
+            <div class="form-row"><label>Avertissement (× référence)<input id="xenon-warning-ratio" type="number" min="1" max="10" step="0.05"></label><label>Critique (× référence)<input id="xenon-critical-ratio" type="number" min="1.05" max="10" step="0.05"></label></div>
+            <div class="form-row"><label>Hausse déclenchant la protection (%/min)<input id="xenon-rise-guard" type="number" min="0.01" max="100" step="0.1"></label><label>Rampe de puissance (MW/min)<input id="xenon-power-ramp" type="number" min="0.1" max="100" step="0.5"></label></div>
+            <label>Rampe thermique (°C/cycle)<input id="xenon-temp-ramp" type="number" min="0.01" max="0.5" step="0.01"></label>
           </article>
           <div class="save-row"><span id="save-status"></span><button class="primary-button" type="submit">Enregistrer les réglages</button></div>
         </form>

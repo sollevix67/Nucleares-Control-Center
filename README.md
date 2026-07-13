@@ -6,6 +6,7 @@ Application locale en français réunissant les trois fonctions demandées pour 
 - alarmes visuelles et sonores avec acquittement ;
 - pilotage automatique des équipements exposés par le webserveur du jeu.
 - supervision détaillée des réservoirs et des générateurs principaux/de secours.
+- suivi du xénon et de l’iode avec protection automatique des rampes de puissance.
 
 Elle fonctionne avec le même code sous **Windows 11** et **Ubuntu 24.04**. Elle n’utilise aucune bibliothèque Python externe.
 
@@ -55,12 +56,15 @@ Pour simuler également un module chimique installé, lancer `python mock_game.p
 | Pressuriseur | Commande de la vanne motorisée entre 50 et 60 % |
 | Primaire | Appoint d’eau entre 80 et 90 % |
 | Chimie | Détection optionnelle du module, maintien du bore par dosage/filtration, sécurités des pompes |
+| Poisons neutroniques | Suivi xénon/iode, alarme relative et ralentissement des rampes de puissance |
 
 Le pilote ne commande que les variables annoncées comme accessibles en écriture par la version courante du jeu. Pour les circuits indexés, cette vérification est complétée par `STEAM_TURBINE_*_INSTALLED` et par l’état du générateur de vapeur. Une tranche marquée `NOT_INSTALLED` ne reçoit aucune commande MSCV ou bypass. Les pompes primaires et secondaires sont filtrées séparément par leur propre état : l’absence d’une pompe ne désactive donc plus par erreur une turbine installée. Une commande absente est ignorée et inscrite dans le journal. Les opérations qui exigent encore une interaction physique du personnage dans le jeu ne peuvent pas être automatisées par le webserveur.
 
 En suivi réseau, les MSCV modulent la puissance vers la demande augmentée de la marge configurée. Les bypass de turbine ne servent pas de régulateur continu : ils sont explicitement maintenus à `0 %` pour envoyer la vapeur disponible vers la turbine. Pour viser exactement la demande affichée, régler **Marge réseau** à `0 MW`.
 
 ### Réservoirs et générateurs dans Supervision
+
+La page **Supervision** est organisée en six sous-onglets : **Synthèse**, **Réacteur**, **Production**, **Fluides**, **Chimie** et **Secours**. Chaque zone conserve uniquement les panneaux utiles. Le sous-onglet Chimie respecte la détection du module : ses réservoirs de produits ne sont pas affichés lorsqu’il n’est pas installé.
 
 La page **Supervision** affiche les niveaux disponibles du condenseur, du circuit primaire, du pressuriseur, du réservoir de refroidissement primaire, de la piscine du cœur, du réservoir externe et de la rétention. Les valeurs sont présentées en pourcentage lorsque la capacité est connue, sinon en litres. Le webserveur ne publiant pas la capacité maximale de la piscine et du réservoir externe, leurs jauges utilisent des références configurables de 100 000 L et 200 000 L. Ces échelles peuvent être modifiées dans **Réglages**.
 
@@ -78,6 +82,12 @@ Lorsque le module est prêt, le pilote utilise exclusivement les commandes POST 
 
 Si la consigne de bore est laissée vide, la concentration `CHEM_BORON_PPM` présente lors de l’activation est capturée et maintenue. Cela évite d’imposer une valeur arbitraire à une partie existante. Une consigne explicite, une bande morte et une puissance maximale peuvent être configurées dans **Réglages**.
 
+### Xénon et iode
+
+Les mesures `CORE_IODINE_GENERATION`, `CORE_IODINE_CUMULATIVE`, `CORE_XENON_GENERATION` et `CORE_XENON_CUMULATIVE` sont affichées dans Supervision avec leur tendance et un historique de 30 minutes. L’application apprend une référence au démarrage, puis déclenche un avertissement ou une alarme critique lorsque le xénon dépasse les rapports configurés.
+
+Ces variables sont en lecture seule : la gestion est donc indirecte. Lorsque leur hausse devient rapide ou que le seuil xénon est dépassé, le pilote ralentit la variation de la cible réseau et de la consigne thermique afin d’éviter les changements brusques. Il n’utilise jamais `FUN_XENON_SPILL` ni `FUN_IODINE_SPILL`, qui sont des événements de jeu et non des commandes normales de conduite. Les seuils et les rampes sont réglables, et la protection peut être désactivée séparément.
+
 ## Réglages importants
 
 Ils sont accessibles depuis l’onglet **Réglages** et conservés dans `config.json` :
@@ -87,6 +97,7 @@ Ils sont accessibles depuis l’onglet **Réglages** et conservés dans `config.
 - température cible du cœur ;
 - marge de production au-dessus de la demande ;
 - consigne de bore facultative, bande morte et puissance chimique maximale ;
+- seuils xénon/iode et rampes de puissance/thermiques de protection ;
 - activation individuelle de chaque zone automatique.
 
 Le pilotage automatique est volontairement arrêté à chaque lancement (`auto_start: false`). Pour le démarrer immédiatement, cette valeur peut être changée manuellement, mais ce n’est pas recommandé pendant les premiers essais.

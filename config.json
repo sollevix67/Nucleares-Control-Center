@@ -19,6 +19,8 @@
     "boron_deadband_ppm": 5.0,
     "boron_max_output_pct": 20.0,
     "boron_gain_pct_per_ppm": 0.5,
+    "xenon_power_ramp_mw_per_min": 10.0,
+    "xenon_temp_ramp_c_per_cycle": 0.15,
     "areas": {
       "reactor": true,
       "grid": true,
@@ -27,7 +29,8 @@
       "retention": true,
       "pressurizer": true,
       "primary_makeup": true,
-      "chemistry": true
+      "chemistry": true,
+      "poisons": true
     }
   },
   "thresholds": {
@@ -40,6 +43,9 @@
     "condenser_high": 70.0,
     "vacuum_low": 50.0,
     "primary_level_low": 75.0,
-    "retention_high": 75.0
+    "retention_high": 75.0,
+    "xenon_warning_ratio": 1.25,
+    "xenon_critical_ratio": 1.5,
+    "xenon_rise_guard_pct_per_min": 0.5
   }
 }
