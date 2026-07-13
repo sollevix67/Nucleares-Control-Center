@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>NUCLEARES Control Center</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"><span></span></div>
+        <div><strong>NUCLEARES</strong><small>CONTROL CENTER</small></div>
+      </div>
+      <nav class="nav" aria-label="Navigation">
+        <button class="nav-button active" data-view="overview">Supervision</button>
+        <button class="nav-button" data-view="alarms">Alarmes <span id="alarm-count" class="count">0</span></button>
+        <button class="nav-button" data-view="variables">Variables</button>
+        <button class="nav-button" data-view="journal">Journal</button>
+        <button class="nav-button" data-view="settings">Réglages</button>
+      </nav>
+      <div class="top-actions">
+        <div class="connection"><i id="connection-dot"></i><span id="connection-label">Connexion…</span></div>
+        <button id="scram" class="scram">SCRAM</button>
+      </div>
+    </header>
+
+    <main>
+      <section id="view-overview" class="view active">
+        <div class="command-strip">
+          <div>
+            <span class="eyebrow">MODE DE CONDUITE</span>
+            <strong id="mode-title">SUPERVISION</strong>
+            <small id="mode-subtitle">Pilote automatique à l’arrêt</small>
+          </div>
+          <label class="toggle-block">
+            <span>PILOTAGE AUTOMATIQUE</span>
+            <input id="autopilot-toggle" type="checkbox">
+            <i></i>
+          </label>
+          <div class="cycle-block"><span>CYCLE</span><strong id="cycle">0</strong></div>
+          <div class="capability-block"><span>CAPACITÉS</span><strong id="capabilities">— / —</strong><small>mesures / commandes</small></div>
+        </div>
+
+        <div id="connection-banner" class="banner hidden">
+          <strong>Serveur Nucleares indisponible</strong>
+          <span id="connection-error">Démarrez le webserveur depuis la tablette du jeu.</span>
+        </div>
+
+        <div class="overview-grid">
+          <article class="panel reactor-panel">
+            <header><div><span class="eyebrow">CŒUR DU RÉACTEUR</span><h1>État thermique</h1></div><span id="core-state" class="status-pill">—</span></header>
+            <div class="reactor-main">
+              <div class="temperature-ring" id="temp-ring">
+                <div><span id="core-temp">—</span><small>°C</small></div>
+              </div>
+              <div class="setpoint">
+                <span>CONSIGNE AUTO</span>
+                <strong><span id="temp-setpoint">330</span> °C</strong>
+                <div class="temperature-scale"><i id="temp-marker"></i></div>
+                <small>250 <b>PLAGE DE CONDUITE</b> 410</small>
+              </div>
+            </div>
+            <div class="metrics three">
+              <div><span>CRITICITÉ</span><strong id="criticality">—</strong></div>
+              <div><span>PRESSION</span><strong id="core-pressure">—</strong><small>bar</small></div>
+              <div><span>INTÉGRITÉ</span><strong id="core-integrity">—</strong><small>%</small></div>
+            </div>
+            <div class="rod-control">
+              <div><span>BARRES DE CONTRÔLE</span><strong id="rod-position">— %</strong></div>
+              <div class="rail"><i id="rod-rail"></i></div>
+              <small>RETIRÉES <span>INSÉRÉES</span></small>
+            </div>
+          </article>
+
+          <article class="panel power-panel">
+            <header><div><span class="eyebrow">RÉSEAU ÉLECTRIQUE</span><h1>Production</h1></div><span id="grid-status" class="status-pill">—</span></header>
+            <div class="power-balance">
+              <div><span>PRODUCTION</span><strong id="generated">—</strong><small>MW</small></div>
+              <div class="balance-arrow"><i></i><span id="balance-label">ÉQUILIBRE</span></div>
+              <div><span>DEMANDE</span><strong id="demand">—</strong><small>MW</small></div>
+            </div>
+            <div id="train-cards" class="train-cards"></div>
+            <canvas id="power-chart" width="800" height="200" aria-label="Historique de production"></canvas>
+          </article>
+
+          <article class="panel systems-panel">
+            <header><div><span class="eyebrow">AUXILIAIRES</span><h1>Bilans hydrauliques</h1></div><span class="live-label">LIVE</span></header>
+            <div class="system-row" data-system="condenser">
+              <div class="system-icon">C</div><div class="system-copy"><strong>Condenseur</strong><span id="condenser-detail">Niveau de remplissage</span></div>
+              <div class="bar"><i id="condenser-bar"></i></div><b id="condenser-fill">— %</b>
+            </div>
+            <div class="system-row" data-system="vacuum">
+              <div class="system-icon">V</div><div class="system-copy"><strong>Vide condenseur</strong><span>Performance d’extraction</span></div>
+              <div class="bar"><i id="vacuum-bar"></i></div><b id="vacuum">— %</b>
+            </div>
+            <div class="system-row" data-system="primary">
+              <div class="system-icon">P</div><div class="system-copy"><strong>Circuit primaire</strong><span>Niveau global</span></div>
+              <div class="bar"><i id="primary-bar"></i></div><b id="primary-level">— %</b>
+            </div>
+            <div class="system-row" data-system="pressurizer">
+              <div class="system-icon">R</div><div class="system-copy"><strong>Pressuriseur</strong><span>Réserve d’appoint</span></div>
+              <div class="bar"><i id="pressurizer-bar"></i></div><b id="pressurizer">— %</b>
+            </div>
+            <div class="system-row" data-system="retention">
+              <div class="system-icon">T</div><div class="system-copy"><strong>Réservoir de rétention</strong><span>Volume collecté</span></div>
+              <div class="bar"><i id="retention-bar"></i></div><b id="retention">— %</b>
+            </div>
+          </article>
+
+          <article class="panel alarm-panel">
+            <header><div><span class="eyebrow">SURVEILLANCE</span><h1>Alarmes actives</h1></div><button class="text-button" data-open="alarms">Tout afficher</button></header>
+            <div id="alarm-preview" class="alarm-list"><div class="empty">Aucune alarme active</div></div>
+          </article>
+        </div>
+      </section>
+
+      <section id="view-alarms" class="view page-view">
+        <div class="page-heading"><div><span class="eyebrow">SURVEILLANCE</span><h1>Gestion des alarmes</h1></div><p>Les alarmes disparaissent automatiquement au retour à la normale.</p></div>
+        <div id="alarm-full" class="panel alarm-list full"><div class="empty">Aucune alarme active</div></div>
+      </section>
+
+      <section id="view-variables" class="view page-view">
+        <div class="page-heading"><div><span class="eyebrow">TÉLÉMÉTRIE</span><h1>Variables du jeu</h1></div><label class="search"><span>RECHERCHER</span><input id="variable-search" placeholder="CORE_TEMP, CONDENSER…"></label></div>
+        <div class="panel table-panel"><table><thead><tr><th>Variable</th><th>Valeur</th><th>Accès</th></tr></thead><tbody id="variable-rows"></tbody></table></div>
+      </section>
+
+      <section id="view-journal" class="view page-view">
+        <div class="page-heading"><div><span class="eyebrow">TRAÇABILITÉ</span><h1>Journal de conduite</h1></div><p>Dernières décisions prises par le pilote automatique.</p></div>
+        <div class="panel table-panel"><table><thead><tr><th>Heure</th><th>Zone</th><th>Commande</th><th>Valeur</th><th>Motif</th></tr></thead><tbody id="journal-rows"></tbody></table></div>
+      </section>
+
+      <section id="view-settings" class="view page-view">
+        <div class="page-heading"><div><span class="eyebrow">CONFIGURATION</span><h1>Réglages de conduite</h1></div><p>Les modifications sont enregistrées sur cet ordinateur.</p></div>
+        <form id="settings-form" class="settings-grid">
+          <article class="panel form-panel">
+            <header><h2>Connexion</h2></header>
+            <label>Adresse du serveur Nucleares<input id="game-url" name="game_url" value="http://127.0.0.1:8785/"></label>
+            <div class="form-row"><label>Lecture (secondes)<input id="poll-seconds" type="number" min="0.5" max="30" step="0.5"></label><label>Commande (secondes)<input id="control-seconds" type="number" min="1" max="60" step="1"></label></div>
+          </article>
+          <article class="panel form-panel">
+            <header><h2>Objectifs automatiques</h2></header>
+            <div class="form-row"><label>Température cœur (°C)<input id="target-temp" type="number" min="250" max="390" step="1"></label><label>Marge réseau (MW)<input id="grid-buffer" type="number" min="0" max="100" step="1"></label></div>
+            <div id="area-toggles" class="area-toggles"></div>
+          </article>
+          <div class="save-row"><span id="save-status"></span><button class="primary-button" type="submit">Enregistrer les réglages</button></div>
+        </form>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="confirm-dialog">
+    <form method="dialog">
+      <span class="eyebrow" id="dialog-eyebrow">CONFIRMATION</span>
+      <h2 id="dialog-title">Confirmer l’action</h2>
+      <p id="dialog-copy"></p>
+      <div class="dialog-actions"><button value="cancel" class="secondary-button">Annuler</button><button id="dialog-confirm" value="confirm" class="danger-button">Confirmer</button></div>
+    </form>
+  </dialog>
+  <div id="toast" role="status"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

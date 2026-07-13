@@ -1,0 +1,12 @@
+services:
+  nucleares-control-center:
+    build: .
+    container_name: nucleares-control-center
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8790:8790"
+    volumes:
+      - ./data:/app/data
+      - ./config.json:/app/config.json
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

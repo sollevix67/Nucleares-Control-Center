@@ -1,0 +1,36 @@
+{
+  "game_url": "http://127.0.0.1:8785/",
+  "dashboard_host": "127.0.0.1",
+  "dashboard_port": 8790,
+  "poll_seconds": 2.0,
+  "control_seconds": 5.0,
+  "history_seconds": 3600,
+  "autopilot": {
+    "auto_start": false,
+    "target_core_temp": 330.0,
+    "grid_follow": true,
+    "grid_buffer_mw": 10.0,
+    "train_power_cap_kw": 100000.0,
+    "areas": {
+      "reactor": true,
+      "grid": true,
+      "secondary": true,
+      "condenser": true,
+      "retention": true,
+      "pressurizer": true,
+      "primary_makeup": true
+    }
+  },
+  "thresholds": {
+    "core_temp_warning": 355.0,
+    "core_temp_critical": 390.0,
+    "core_temp_scram": 410.0,
+    "core_pressure_warning_ratio": 0.92,
+    "core_integrity_critical": 25.0,
+    "condenser_low": 35.0,
+    "condenser_high": 70.0,
+    "vacuum_low": 50.0,
+    "primary_level_low": 75.0,
+    "retention_high": 75.0
+  }
+}
