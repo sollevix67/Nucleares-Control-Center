@@ -21,6 +21,7 @@ READABLE = [
     "CONDENSER_VACUUM_PUMP_ACTIVE", "CONDENSER_CIRCULATION_PUMP_ACTIVE",
     "FREIGHT_PUMP_CONDENSER_ACTIVE", "COOLANT_CORE_PRIMARY_LOOP_LEVEL",
     "PRESSURIZER_FILL_LEVEL", "PRESSURIZER_TEMPERATURE", "PRESSURIZER_TEMPERATURE_OPERATIVE",
+    "PRESSURIZER_PRESSURE", "PRESSURIZER_PRESSURE_OPERATIVE",
     "CORE_PRIMARY_CIRCUIT_COOLING_TANK_VOLUME",
     "CORE_POOL_COOLANT_TANK_VOLUME", "CORE_EXTERNAL_COOLANT_RESERVOIR_VOLUME",
     "FREIGHT_PUMP_FEEDWATER_ACTIVE", "VACUUM_RETENTION_TANK_VOLUME",
@@ -99,6 +100,7 @@ class Plant:
             "FREIGHT_PUMP_CONDENSER_ACTIVE": False, "COOLANT_CORE_PRIMARY_LOOP_LEVEL": 88.0,
             "PRESSURIZER_FILL_LEVEL": 60.0, "PRESSURIZER_TEMPERATURE": 350.0,
             "PRESSURIZER_TEMPERATURE_OPERATIVE": 350.0,
+            "PRESSURIZER_PRESSURE": 160.0, "PRESSURIZER_PRESSURE_OPERATIVE": 160.0,
             "CORE_PRIMARY_CIRCUIT_COOLING_TANK_VOLUME": 106030.0,
             "CORE_POOL_COOLANT_TANK_VOLUME": 80000.0, "CORE_EXTERNAL_COOLANT_RESERVOIR_VOLUME": 150000.0,
             "FREIGHT_PUMP_FEEDWATER_ACTIVE": False, "VACUUM_RETENTION_TANK_VOLUME": 22000.0,
@@ -121,6 +123,10 @@ class Plant:
         }
         self.pressurizer_valve = {
             "Name": "Valvula_Pressurizer_Spray", "Value": 0,
+            "IsOpened": False, "IsClosed": True, "Actuator": "OFF",
+        }
+        self.pressurizer_vent_valve = {
+            "Name": "PZR VENT VALVE", "Value": 0,
             "IsOpened": False, "IsClosed": True, "Actuator": "OFF",
         }
         if chemistry_enabled:
@@ -180,13 +186,16 @@ class Plant:
                 self.values["STEAM_EJECTOR_CONDENSER_RETURN_VALVE_ACTUAL"] = float(value)
             elif variable == "FREIGHT_PUMP_FEEDWATER_SWITCH":
                 self.values["FREIGHT_PUMP_FEEDWATER_ACTIVE"] = bool(value)
-            elif variable in {"VALVE_OPEN", "VALVE_CLOSE", "VALVE_OFF"} and value == "Valvula_Pressurizer_Spray":
+            elif variable in {"VALVE_OPEN", "VALVE_CLOSE", "VALVE_OFF"} and value in {
+                "Valvula_Pressurizer_Spray", "PZR VENT VALVE",
+            }:
+                valve = self.pressurizer_valve if value == "Valvula_Pressurizer_Spray" else self.pressurizer_vent_valve
                 if variable == "VALVE_OPEN":
-                    self.pressurizer_valve.update({"Value": 100, "IsOpened": True, "IsClosed": False, "Actuator": "OPEN"})
+                    valve.update({"Value": 100, "IsOpened": True, "IsClosed": False, "Actuator": "OPEN"})
                 elif variable == "VALVE_CLOSE":
-                    self.pressurizer_valve.update({"Value": 0, "IsOpened": False, "IsClosed": True, "Actuator": "CLOSE"})
+                    valve.update({"Value": 0, "IsOpened": False, "IsClosed": True, "Actuator": "CLOSE"})
                 else:
-                    self.pressurizer_valve["Actuator"] = "OFF"
+                    valve["Actuator"] = "OFF"
             elif variable == "CHEM_BORON_DOSAGE_ORDERED_RATE":
                 rate = max(0.0, min(100.0, float(value)))
                 self.values["CHEM_BORON_DOSAGE_ORDERED"] = rate
@@ -278,8 +287,11 @@ class MockHandler(BaseHTTPRequestHandler):
             self._send(json.dumps({"values": values, "errors": {}}), "application/json")
         elif variable == "VALVE_PANEL_JSON":
             with self.plant.lock:
-                valve = dict(self.plant.pressurizer_valve)
-            self._send(json.dumps({"valves": [valve]}), "application/json")
+                valves = [
+                    dict(self.plant.pressurizer_valve),
+                    dict(self.plant.pressurizer_vent_valve),
+                ]
+            self._send(json.dumps({"valves": valves}), "application/json")
         elif variable in self.plant.values:
             self._send(str(self.plant.values[variable]), "text/plain")
         else:

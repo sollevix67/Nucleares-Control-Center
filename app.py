@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-APP_VERSION = "0.6.2"
+APP_VERSION = "0.6.3"
 BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 USER_ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 STATIC_DIR = BUNDLE_ROOT / "static"
@@ -446,6 +446,8 @@ class ControlCenter:
     RETENTION_DRAIN_START_PCT = 55.0
     PRESSURIZER_SPRAY_OPEN_MARGIN_C = 5.0
     PRESSURIZER_SPRAY_CLOSE_MARGIN_C = 1.0
+    PRESSURIZER_VENT_OPEN_MARGIN_BAR = 5.0
+    PRESSURIZER_VENT_CLOSE_MARGIN_BAR = 1.0
     CHEM_DOSAGE_COMMAND = "CHEM_BORON_DOSAGE_ORDERED_RATE"
     CHEM_FILTER_COMMAND = "CHEM_BORON_FILTER_ORDERED_SPEED"
     POISON_ISOTOPES = ("IODINE", "XENON")
@@ -470,6 +472,7 @@ class ControlCenter:
         self.last_write: dict[str, tuple[Any, float]] = {}
         self.retention_draining = False
         self.pressurizer_spraying = False
+        self.pressurizer_venting = False
         self.feedwater_on = False
         self.condenser_fill_on = False
         self.rod_integral = 0.0
@@ -1322,39 +1325,93 @@ class ControlCenter:
     def _control_pressurizer(self, s: dict[str, Any]) -> None:
         temperature_raw = s.get("PRESSURIZER_TEMPERATURE")
         operative_raw = s.get("PRESSURIZER_TEMPERATURE_OPERATIVE")
-        if temperature_raw is None or operative_raw is None:
-            return
-
-        temperature = as_number(temperature_raw)
-        operative = as_number(operative_raw)
-        open_at = operative + self.PRESSURIZER_SPRAY_OPEN_MARGIN_C
-        close_at = operative + self.PRESSURIZER_SPRAY_CLOSE_MARGIN_C
 
         # Resynchroniser la mémoire du pilote avec l'état réel de la vanne.
         # Cela permet notamment de la refermer après un redémarrage de l'app.
         try:
-            valve = self.client.valves().get(self.PRESSURIZER_VALVE)
+            valves = self.client.valves()
         except (OSError, RuntimeError, ValueError, urllib.error.URLError, json.JSONDecodeError):
-            valve = None
-        if isinstance(valve, dict):
+            valves = {}
+
+        def valve_open_state(valve: Any) -> bool | None:
+            if not isinstance(valve, dict):
+                return None
             actuator = status_key(valve.get("Actuator", valve.get("actuator", "")))
             if bool(valve.get("IsOpened", valve.get("isOpened", False))) or actuator in {"OPEN", "OPENING", "OUVERTURE"}:
-                self.pressurizer_spraying = True
-            elif bool(valve.get("IsClosed", valve.get("isClosed", False))) or actuator in {"CLOSE", "CLOSING", "FERMETURE"}:
-                self.pressurizer_spraying = False
+                return True
+            if bool(valve.get("IsClosed", valve.get("isClosed", False))) or actuator in {"CLOSE", "CLOSING", "FERMETURE"}:
+                return False
+            value = valve.get("Value", valve.get("value"))
+            return None if value is None else as_number(value) > 0.5
 
-        if temperature >= open_at and not self.pressurizer_spraying and "VALVE_OPEN" in self.writable:
+        spray_state = valve_open_state(valves.get(self.PRESSURIZER_VALVE))
+        if spray_state is not None:
+            self.pressurizer_spraying = spray_state
+
+        if temperature_raw is not None and operative_raw is not None:
+            temperature = as_number(temperature_raw)
+            operative = as_number(operative_raw)
+            open_at = operative + self.PRESSURIZER_SPRAY_OPEN_MARGIN_C
+            close_at = operative + self.PRESSURIZER_SPRAY_CLOSE_MARGIN_C
+            if temperature >= open_at and not self.pressurizer_spraying and "VALVE_OPEN" in self.writable:
+                if self._valve(
+                    "pressuriseur", "VALVE_OPEN", self.PRESSURIZER_VALVE,
+                    f"Température {temperature:.1f} °C, consigne {operative:.1f} °C",
+                ):
+                    self.pressurizer_spraying = True
+            elif temperature <= close_at and self.pressurizer_spraying and "VALVE_CLOSE" in self.writable:
+                if self._valve(
+                    "pressuriseur", "VALVE_CLOSE", self.PRESSURIZER_VALVE,
+                    f"Température revenue à {temperature:.1f} °C",
+                ):
+                    self.pressurizer_spraying = False
+
+        pressure_raw = s.get("PRESSURIZER_PRESSURE")
+        pressure_operative_raw = s.get("PRESSURIZER_PRESSURE_OPERATIVE")
+        if pressure_raw is None or pressure_operative_raw is None:
+            return
+
+        vent_name: str | None = None
+        exact_names = {
+            "PZR VENT VALVE", "PRESSURIZER VENT VALVE", "PRESSURIZER RELIEF VALVE",
+            "VALVULA PRESSURIZER VENT", "VALVULA PRESSURIZER RELIEF",
+        }
+        for name in valves:
+            if status_key(name) in exact_names:
+                vent_name = name
+                break
+        if vent_name is None:
+            for name in valves:
+                key = status_key(name)
+                words = set(key.split())
+                is_pressurizer = bool(words.intersection({"PZR", "PRESSURIZER", "PRESSURISER", "PRESURIZADOR"}))
+                is_vent = bool(words.intersection({"VENT", "VENTING", "RELIEF", "VENTEO", "ALIVIO"}))
+                if is_pressurizer and is_vent and "SPRAY" not in words:
+                    vent_name = name
+                    break
+        if vent_name is None:
+            return
+
+        vent_state = valve_open_state(valves.get(vent_name))
+        if vent_state is not None:
+            self.pressurizer_venting = vent_state
+
+        pressure = as_number(pressure_raw)
+        pressure_operative = as_number(pressure_operative_raw)
+        vent_open_at = pressure_operative + self.PRESSURIZER_VENT_OPEN_MARGIN_BAR
+        vent_close_at = pressure_operative + self.PRESSURIZER_VENT_CLOSE_MARGIN_BAR
+        if pressure >= vent_open_at and not self.pressurizer_venting and "VALVE_OPEN" in self.writable:
             if self._valve(
-                "pressuriseur", "VALVE_OPEN", self.PRESSURIZER_VALVE,
-                f"Température {temperature:.1f} °C, consigne {operative:.1f} °C",
+                "pressuriseur", "VALVE_OPEN", vent_name,
+                f"Surpression {pressure:.1f} bar, consigne {pressure_operative:.1f} bar",
             ):
-                self.pressurizer_spraying = True
-        elif temperature <= close_at and self.pressurizer_spraying and "VALVE_CLOSE" in self.writable:
+                self.pressurizer_venting = True
+        elif pressure <= vent_close_at and self.pressurizer_venting and "VALVE_CLOSE" in self.writable:
             if self._valve(
-                "pressuriseur", "VALVE_CLOSE", self.PRESSURIZER_VALVE,
-                f"Température revenue à {temperature:.1f} °C",
+                "pressuriseur", "VALVE_CLOSE", vent_name,
+                f"Pression revenue à {pressure:.1f} bar",
             ):
-                self.pressurizer_spraying = False
+                self.pressurizer_venting = False
 
     def _control_primary_makeup(self, s: dict[str, Any]) -> None:
         level = as_number(s.get("COOLANT_CORE_PRIMARY_LOOP_LEVEL"), 100.0)
@@ -1491,6 +1548,7 @@ class ControlCenter:
                 state = dict(self.state)
                 self.retention_draining = False
                 self.pressurizer_spraying = False
+                self.pressurizer_venting = False
                 self.rod_integral = 0.0
                 for pid in [*self.train_pid.values(), *self.secondary_pid.values()]:
                     pid.reset()

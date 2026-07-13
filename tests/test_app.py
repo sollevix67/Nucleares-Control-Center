@@ -451,6 +451,40 @@ class ControlTests(unittest.TestCase):
             finally:
                 app.DATA_DIR = old_data
 
+    def test_pressurizer_vent_closes_when_pressure_is_normal(self):
+        with MockServer() as mock, tempfile.TemporaryDirectory() as temp:
+            old_data = app.DATA_DIR; app.DATA_DIR = Path(temp)
+            try:
+                center = app.ControlCenter(self.config(mock.url))
+                center.readable, center.writable = center.client.discover()
+                state = center.client.batch_get(center.readable)
+
+                state["PRESSURIZER_PRESSURE"] = 166.0
+                state["PRESSURIZER_PRESSURE_OPERATIVE"] = 160.0
+                center._control_pressurizer(state)
+                with mock.plant.lock:
+                    self.assertIn(("VALVE_OPEN", "PZR VENT VALVE"), mock.plant.commands)
+                    self.assertTrue(mock.plant.pressurizer_vent_valve["IsOpened"])
+
+                state["PRESSURIZER_PRESSURE"] = 160.0
+                with mock.plant.lock:
+                    mock.plant.commands.clear()
+                center._control_pressurizer(state)
+                with mock.plant.lock:
+                    self.assertIn(("VALVE_CLOSE", "PZR VENT VALVE"), mock.plant.commands)
+                    self.assertTrue(mock.plant.pressurizer_vent_valve["IsClosed"])
+
+                # L'état réel permet aussi la fermeture après redémarrage.
+                mock.plant.set("VALVE_OPEN", "PZR VENT VALVE")
+                center.pressurizer_venting = False
+                with mock.plant.lock:
+                    mock.plant.commands.clear()
+                center._control_pressurizer(state)
+                with mock.plant.lock:
+                    self.assertIn(("VALVE_CLOSE", "PZR VENT VALVE"), mock.plant.commands)
+            finally:
+                app.DATA_DIR = old_data
+
     def test_chemistry_captures_current_ppm(self):
         with MockServer(chemistry_enabled=True) as mock, tempfile.TemporaryDirectory() as temp:
             old_data = app.DATA_DIR; app.DATA_DIR = Path(temp)
