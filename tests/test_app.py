@@ -106,6 +106,46 @@ class ControlTests(unittest.TestCase):
             finally:
                 app.DATA_DIR = old_data
 
+    def test_uninstalled_circuits_receive_no_commands(self):
+        with MockServer() as mock, tempfile.TemporaryDirectory() as temp:
+            old_data = app.DATA_DIR; app.DATA_DIR = Path(temp)
+            try:
+                center = app.ControlCenter(self.config(mock.url))
+                center.readable, center.writable = center.client.discover()
+                state = center.client.batch_get(center.readable)
+                for index in (1, 2):
+                    state[f"STEAM_TURBINE_{index}_INSTALLED"] = False
+                    state[f"STEAM_GEN_{index}_STATUS"] = 4
+                    state[f"COOLANT_CORE_CIRCULATION_PUMP_{index}_STATUS"] = 4
+                    state[f"COOLANT_SEC_CIRCULATION_PUMP_{index}_STATUS"] = 4
+                    state[f"STEAM_TURBINE_{index}_BYPASS_ACTUAL"] = 5.0
+                state["STEAM_TURBINE_0_BYPASS_ACTUAL"] = 5.0
+                center.state = state
+                center.derived = center._derive(state)
+
+                center._autopilot_step(state, 5.0)
+                commands = {name for name, _ in mock.plant.commands}
+                self.assertIn("MSCV_0_OPENING_ORDERED", commands)
+                self.assertIn("STEAM_TURBINE_0_BYPASS_ORDERED", commands)
+                self.assertIn("COOLANT_CORE_CIRCULATION_PUMP_0_ORDERED_SPEED", commands)
+                self.assertIn("COOLANT_SEC_CIRCULATION_PUMP_0_ORDERED_SPEED", commands)
+                for index in (1, 2):
+                    self.assertNotIn(f"MSCV_{index}_OPENING_ORDERED", commands)
+                    self.assertNotIn(f"STEAM_TURBINE_{index}_BYPASS_ORDERED", commands)
+                    self.assertNotIn(f"COOLANT_CORE_CIRCULATION_PUMP_{index}_ORDERED_SPEED", commands)
+                    self.assertNotIn(f"COOLANT_SEC_CIRCULATION_PUMP_{index}_ORDERED_SPEED", commands)
+
+                with mock.plant.lock:
+                    mock.plant.commands.clear()
+                center.last_write.clear()
+                center.emergency_scram("test circuits", state)
+                scram_commands = {name for name, _ in mock.plant.commands}
+                self.assertIn("COOLANT_CORE_CIRCULATION_PUMP_0_ORDERED_SPEED", scram_commands)
+                self.assertNotIn("COOLANT_CORE_CIRCULATION_PUMP_1_ORDERED_SPEED", scram_commands)
+                self.assertNotIn("COOLANT_CORE_CIRCULATION_PUMP_2_ORDERED_SPEED", scram_commands)
+            finally:
+                app.DATA_DIR = old_data
+
     def test_chemistry_captures_current_ppm(self):
         with MockServer(chemistry_enabled=True) as mock, tempfile.TemporaryDirectory() as temp:
             old_data = app.DATA_DIR; app.DATA_DIR = Path(temp)

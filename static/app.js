@@ -58,13 +58,30 @@ function setBar(id, value, warningMode = "none") {
   bar.style.background = color;
 }
 
+function isNotInstalled(value) {
+  if (value === null || value === undefined) return false;
+  const text = String(value).trim().toUpperCase().replaceAll("-", "_").replaceAll(" ", "_");
+  return Number(value) === 4 || ["NOT_INSTALLED", "NO_INSTALADO", "NON_INSTALLE", "NON_INSTALLÉ"].includes(text);
+}
+
+function trainInstalled(s, i) {
+  const flag = s[`STEAM_TURBINE_${i}_INSTALLED`];
+  if (flag !== null && flag !== undefined && !Boolean(flag)) return false;
+  if (isNotInstalled(s[`STEAM_GEN_${i}_STATUS`]) || isNotInstalled(s[`COOLANT_SEC_CIRCULATION_PUMP_${i}_STATUS`])) return false;
+  return flag !== null && flag !== undefined ? Boolean(flag) : s[`GENERATOR_${i}_KW`] !== undefined || s[`STEAM_TURBINE_${i}_RPM`] !== undefined;
+}
+
 function trainCards(s, targetTotal) {
-  const available = [0,1,2].filter(i => s[`GENERATOR_${i}_KW`] !== undefined);
+  const available = [0,1,2].filter(i => trainInstalled(s, i) && s[`GENERATOR_${i}_KW`] !== undefined);
   const target = available.length ? targetTotal / available.length : 0;
   $("train-cards").innerHTML = [0,1,2].map(i => {
+    if (!trainInstalled(s, i)) {
+      return `<div class="train-card"><header><span>GROUPE ${i+1}</span><span>NON INSTALLÉ</span></header>
+        <strong>—</strong><div class="bar"><i style="width:0%"></i></div><small><span>COMMANDES DÉSACTIVÉES</span></small></div>`;
+    }
     const kw = Number(s[`GENERATOR_${i}_KW`] || 0), pct = Math.max(0, Math.min(100, target ? kw / target * 100 : 0));
     const rpm = s[`STEAM_TURBINE_${i}_RPM`];
-    return `<div class="train-card"><header><span>GROUPE ${i+1}</span><span>${rpm === undefined ? "NON INSTALLÉ" : `${fmt(rpm,0)} RPM`}</span></header>
+    return `<div class="train-card"><header><span>GROUPE ${i+1}</span><span>${rpm === undefined ? "VITESSE —" : `${fmt(rpm,0)} RPM`}</span></header>
       <strong>${fmt(kw/1000)} MW</strong><div class="bar"><i style="width:${pct}%;background:${pct > 110 ? 'var(--amber)' : 'var(--green)'}"></i></div>
       <small><span>MSCV ${fmt(s[`MSCV_${i}_OPENING_ACTUAL`])}%</span><span>SEC ${fmt(s[`COOLANT_SEC_CIRCULATION_PUMP_${i}_ORDERED_SPEED`])}%</span></small></div>`;
   }).join("");

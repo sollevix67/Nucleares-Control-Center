@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-APP_VERSION = "0.3.1"
+APP_VERSION = "0.3.2"
 BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 USER_ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 STATIC_DIR = BUNDLE_ROOT / "static"
@@ -485,12 +485,58 @@ class ControlCenter:
             wait = max(0.2, float(self.config["control_seconds"]) - (time.monotonic() - started))
             self.stop_event.wait(wait)
 
+    @staticmethod
+    def _status_not_installed(value: Any) -> bool:
+        """Recognize the game's numeric and textual NOT_INSTALLED statuses."""
+        if value is None:
+            return False
+        if int(as_number(value, -1.0)) == 4:
+            return True
+        text = str(value).strip().upper().replace("-", "_").replace(" ", "_")
+        return text in {"NOT_INSTALLED", "NO_INSTALADO", "NON_INSTALLE", "NON_INSTALLÉ"}
+
+    def _train_installed(self, s: dict[str, Any], index: int) -> bool:
+        """Return whether a turbine/steam-generator train is physically installed."""
+        installed_name = f"STEAM_TURBINE_{index}_INSTALLED"
+        installed_raw = s.get(installed_name)
+        if installed_name in s and installed_raw is not None and not bool(installed_raw):
+            return False
+        if self._status_not_installed(s.get(f"STEAM_GEN_{index}_STATUS")):
+            return False
+        if self._status_not_installed(s.get(f"COOLANT_SEC_CIRCULATION_PUMP_{index}_STATUS")):
+            return False
+        if installed_name in s and installed_raw is not None:
+            return bool(installed_raw)
+        return any(
+            s.get(name) is not None
+            for name in (f"GENERATOR_{index}_KW", f"STEAM_TURBINE_{index}_RPM")
+        )
+
+    def _primary_pump_installed(self, s: dict[str, Any], index: int) -> bool:
+        status_name = f"COOLANT_CORE_CIRCULATION_PUMP_{index}_STATUS"
+        if status_name in s:
+            return not self._status_not_installed(s.get(status_name))
+        quantity = s.get("COOLANT_CORE_QUANTITY_CIRCULATION_PUMPS_PRESENT")
+        if quantity is not None:
+            return index < int(as_number(quantity))
+        return f"COOLANT_CORE_CIRCULATION_PUMP_{index}_ORDERED_SPEED" in self.writable
+
+    def _secondary_pump_installed(self, s: dict[str, Any], index: int) -> bool:
+        if not self._train_installed(s, index):
+            return False
+        status_name = f"COOLANT_SEC_CIRCULATION_PUMP_{index}_STATUS"
+        return status_name not in s or not self._status_not_installed(s.get(status_name))
+
     def _derive(self, s: dict[str, Any]) -> dict[str, Any]:
         def optional_number(name: str) -> float | None:
             value = s.get(name)
             return None if value is None else round(as_number(value), 2)
 
-        generated = sum(as_number(s.get(f"GENERATOR_{i}_KW")) for i in range(3))
+        generated = sum(
+            as_number(s.get(f"GENERATOR_{i}_KW"))
+            for i in range(3)
+            if self._train_installed(s, i)
+        )
         demand_kw = as_number(s.get("POWER_DEMAND_MW")) * 1000.0
         liquid = as_number(s.get("CONDENSER_VOLUME"))
         vapor = as_number(s.get("CONDENSER_VAPOR_VOLUME"))
@@ -549,10 +595,7 @@ class ControlCenter:
 
         main_generators: list[dict[str, Any]] = []
         for index in range(3):
-            installed_raw = s.get(f"STEAM_TURBINE_{index}_INSTALLED")
-            installed = bool(installed_raw) if installed_raw is not None else any(
-                name in s for name in (f"GENERATOR_{index}_KW", f"STEAM_TURBINE_{index}_RPM")
-            )
+            installed = self._train_installed(s, index)
             power = optional_number(f"GENERATOR_{index}_KW")
             rpm = optional_number(f"STEAM_TURBINE_{index}_RPM")
             breaker_raw = s.get(f"GENERATOR_{index}_BREAKER")
@@ -770,7 +813,10 @@ class ControlCenter:
             "filter_actual": None if s.get("CHEM_BORON_FILTER_ACTUAL") is None else as_number(s.get("CHEM_BORON_FILTER_ACTUAL")),
         }
 
-    def emergency_scram(self, reason: str = "Commande opérateur") -> None:
+    def emergency_scram(self, reason: str = "Commande opérateur", state: dict[str, Any] | None = None) -> None:
+        if state is None:
+            with self.lock:
+                state = dict(self.state)
         command = self._first_available("CORE_SCRAM_BUTTON", "SCRAM_BUTTON", "RODS_POS_ORDERED")
         if not command:
             raise RuntimeError("La version du jeu n’expose aucune commande SCRAM")
@@ -778,7 +824,7 @@ class ControlCenter:
         self._write("sécurité", command, value, reason, cooldown=0)
         for i in range(3):
             pump = f"COOLANT_CORE_CIRCULATION_PUMP_{i}_ORDERED_SPEED"
-            if pump in self.writable:
+            if pump in self.writable and self._primary_pump_installed(state, i):
                 self._write("sécurité", pump, 90.0, "Refroidissement après SCRAM", cooldown=0)
 
     def _autopilot_step(self, s: dict[str, Any], dt: float) -> None:
@@ -786,7 +832,7 @@ class ControlCenter:
         temp = as_number(s.get("CORE_TEMP"))
         thresholds = self.config["thresholds"]
         if bool(s.get("CORE_IMMINENT_FUSION")) or temp >= thresholds["core_temp_scram"]:
-            self.emergency_scram("Protection automatique température/fusion")
+            self.emergency_scram("Protection automatique température/fusion", s)
             return
 
         if areas.get("reactor"):
@@ -820,11 +866,16 @@ class ControlCenter:
         self._write("réacteur", ordered_name, round(target, 2), f"Régulation cœur {setpoint:.0f} °C")
         for i in range(3):
             pump = f"COOLANT_CORE_CIRCULATION_PUMP_{i}_ORDERED_SPEED"
-            if pump in self.writable:
+            if pump in self.writable and self._primary_pump_installed(s, i):
                 self._write("réacteur", pump, 65.0, "Débit primaire nominal", cooldown=30)
 
     def _control_grid(self, s: dict[str, Any], dt: float, secondary: bool) -> None:
-        installed = [i for i in range(3) if f"GENERATOR_{i}_KW" in s and f"MSCV_{i}_OPENING_ORDERED" in self.writable]
+        installed = [
+            i for i in range(3)
+            if self._train_installed(s, i)
+            and f"GENERATOR_{i}_KW" in s
+            and f"MSCV_{i}_OPENING_ORDERED" in self.writable
+        ]
         if not installed:
             return
         demand = as_number(s.get("POWER_DEMAND_MW")) * 1000.0
@@ -853,7 +904,7 @@ class ControlCenter:
             if secondary:
                 pump = f"COOLANT_SEC_CIRCULATION_PUMP_{i}_ORDERED_SPEED"
                 level = as_number(s.get(f"COOLANT_SEC_{i}_LIQUID_VOLUME"))
-                if pump in self.writable and level > 0:
+                if pump in self.writable and self._secondary_pump_installed(s, i) and level > 0:
                     correction = self.secondary_pid[i].step(25000.0 - level, dt)
                     speed = max(5.0, min(100.0, steam / 2.0 + correction))
                     self._write("secondaire", pump, round(speed, 2), "Niveau générateur vapeur")

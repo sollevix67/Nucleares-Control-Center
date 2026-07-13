@@ -56,7 +56,7 @@ Pour simuler également un module chimique installé, lancer `python mock_game.p
 | Primaire | Appoint d’eau entre 80 et 90 % |
 | Chimie | Détection optionnelle du module, maintien du bore par dosage/filtration, sécurités des pompes |
 
-Le pilote ne commande que les variables annoncées comme accessibles en écriture par la version courante du jeu. Une commande absente est ignorée et inscrite dans le journal. Les opérations qui exigent encore une interaction physique du personnage dans le jeu ne peuvent pas être automatisées par le webserveur.
+Le pilote ne commande que les variables annoncées comme accessibles en écriture par la version courante du jeu. Pour les circuits indexés, cette vérification est complétée par `STEAM_TURBINE_*_INSTALLED` et par l’état des générateurs de vapeur et des pompes : une tranche ou une pompe marquée `NOT_INSTALLED` ne reçoit aucune commande MSCV, bypass ou débit, même si son endpoint POST figure dans la liste globale. Une commande absente est ignorée et inscrite dans le journal. Les opérations qui exigent encore une interaction physique du personnage dans le jeu ne peuvent pas être automatisées par le webserveur.
 
 ### Réservoirs et générateurs dans Supervision
 
