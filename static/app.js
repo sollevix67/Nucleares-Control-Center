@@ -5,7 +5,8 @@ const state = { snapshot: null, history: {}, lastAlarmIds: new Set(), chartTimer
 const AREA_LABELS = {
   reactor: "Régulation du cœur", grid: "Suivi de la demande réseau", secondary: "Circuits secondaires",
   condenser: "Condenseur et vide", retention: "Réservoir de rétention",
-  pressurizer: "Pressuriseur", primary_makeup: "Appoint circuit primaire"
+  pressurizer: "Pressuriseur", primary_makeup: "Appoint circuit primaire",
+  chemistry: "Chimie et bore (si installé)"
 };
 
 function showToast(message, error = false) {
@@ -101,6 +102,12 @@ function render(snapshot) {
   const hydraulic = { condenser: d.condenser_fill_pct, vacuum: s.CONDENSER_VACUUM, primary: s.COOLANT_CORE_PRIMARY_LOOP_LEVEL, pressurizer: d.pressurizer_pct, retention: d.retention_pct };
   const hydraulicText = { condenser: 'condenser-fill', vacuum: 'vacuum', primary: 'primary-level', pressurizer: 'pressurizer', retention: 'retention' };
   Object.entries(hydraulic).forEach(([key,value]) => { $(hydraulicText[key]).textContent = `${fmt(value)} %`; setBar(`${key}-bar`, value, key === 'retention' ? 'high' : 'low'); });
+  const chemistry = snapshot.chemistry || {status:'unavailable',message:'Module chimique indisponible'};
+  const chemistryLabels = {ready:'PRÊT',fault:'DÉFAUT',waiting_truck:'CAMION REQUIS',read_only:'LECTURE SEULE',not_installed:'NON INSTALLÉ',unavailable:'INDISPONIBLE'};
+  $("chemistry-status").textContent = chemistryLabels[chemistry.status] || chemistry.status;
+  $("chemistry-status").className = `status-pill ${chemistry.status === 'ready' ? 'ok' : chemistry.status === 'fault' ? 'danger' : chemistry.status === 'waiting_truck' || chemistry.status === 'read_only' ? 'warn' : ''}`;
+  $("chemistry-detail").textContent = chemistry.message || 'État inconnu';
+  $("boron-ppm").textContent = `${fmt(chemistry.ppm)} ppm`;
   renderAlarms(snapshot.alarms || []); renderJournal(snapshot.actions || []);
 }
 
@@ -132,8 +139,8 @@ async function acknowledge(id){try{await api('/api/ack',{method:'POST',body:JSON
 let searchTimer; $("variable-search").addEventListener("input",()=>{clearTimeout(searchTimer);searchTimer=setTimeout(loadVariables,180)});
 async function loadVariables(){try{const data=await api(`/api/variables?q=${encodeURIComponent($("variable-search").value)}`);$("variable-rows").innerHTML=data.variables.map(v=>`<tr><td>${escapeHtml(v.name)}</td><td>${escapeHtml(String(v.value ?? '—'))}</td><td><span class="tag ${v.writable?'write':''}">${v.writable?'LECTURE / ÉCRITURE':'LECTURE'}</span></td></tr>`).join('');}catch(err){showToast(err.message,true);}}
 
-async function loadSettings(){try{const c=await api('/api/config');$("game-url").value=c.game_url;$("poll-seconds").value=c.poll_seconds;$("control-seconds").value=c.control_seconds;$("target-temp").value=c.autopilot.target_core_temp;$("grid-buffer").value=c.autopilot.grid_buffer_mw;$("area-toggles").innerHTML=Object.entries(AREA_LABELS).map(([key,label])=>`<label class="area-check"><input type="checkbox" data-area="${key}" ${c.autopilot.areas[key]?'checked':''}>${label}</label>`).join('');}catch(err){showToast(err.message,true);}}
-$("settings-form").addEventListener("submit",async e=>{e.preventDefault();const areas={};document.querySelectorAll('[data-area]').forEach(i=>areas[i.dataset.area]=i.checked);const payload={game_url:$("game-url").value,poll_seconds:Number($("poll-seconds").value),control_seconds:Number($("control-seconds").value),autopilot:{target_core_temp:Number($("target-temp").value),grid_buffer_mw:Number($("grid-buffer").value),areas}};try{await api('/api/config',{method:'POST',body:JSON.stringify(payload)});$("save-status").textContent='Réglages enregistrés';showToast('Configuration enregistrée');setTimeout(()=>$("save-status").textContent='',2500);}catch(err){showToast(err.message,true);}});
+async function loadSettings(){try{const c=await api('/api/config');$("game-url").value=c.game_url;$("poll-seconds").value=c.poll_seconds;$("control-seconds").value=c.control_seconds;$("target-temp").value=c.autopilot.target_core_temp;$("grid-buffer").value=c.autopilot.grid_buffer_mw;$("target-boron").value=c.autopilot.target_boron_ppm ?? '';$("boron-deadband").value=c.autopilot.boron_deadband_ppm;$("boron-max-output").value=c.autopilot.boron_max_output_pct;$("area-toggles").innerHTML=Object.entries(AREA_LABELS).map(([key,label])=>`<label class="area-check"><input type="checkbox" data-area="${key}" ${c.autopilot.areas[key]?'checked':''}>${label}</label>`).join('');}catch(err){showToast(err.message,true);}}
+$("settings-form").addEventListener("submit",async e=>{e.preventDefault();const areas={};document.querySelectorAll('[data-area]').forEach(i=>areas[i.dataset.area]=i.checked);const targetBoron=$("target-boron").value.trim();const payload={game_url:$("game-url").value,poll_seconds:Number($("poll-seconds").value),control_seconds:Number($("control-seconds").value),autopilot:{target_core_temp:Number($("target-temp").value),grid_buffer_mw:Number($("grid-buffer").value),target_boron_ppm:targetBoron===''?null:Number(targetBoron),boron_deadband_ppm:Number($("boron-deadband").value),boron_max_output_pct:Number($("boron-max-output").value),areas}};try{await api('/api/config',{method:'POST',body:JSON.stringify(payload)});$("save-status").textContent='Réglages enregistrés';showToast('Configuration enregistrée');setTimeout(()=>$("save-status").textContent='',2500);}catch(err){showToast(err.message,true);}});
 
 function beep(){try{const audio=new AudioContext();const osc=audio.createOscillator(),gain=audio.createGain();osc.frequency.value=660;gain.gain.setValueAtTime(.04,audio.currentTime);gain.gain.exponentialRampToValueAtTime(.001,audio.currentTime+.18);osc.connect(gain).connect(audio.destination);osc.start();osc.stop(audio.currentTime+.18);}catch(_) {}}
 function escapeHtml(value){return String(value).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}

@@ -38,6 +38,7 @@ Le simulateur inclus permet d’essayer le tableau de bord sans lancer le jeu :
 - Linux : `chmod +x start_demo_linux.sh && ./start_demo_linux.sh`.
 
 Le simulateur imite la découverte des variables, la télémétrie, les commandes POST et une dynamique simplifiée du réacteur. Il sert exclusivement aux essais logiciels.
+Pour simuler également un module chimique installé, lancer `python mock_game.py --chemistry` avant `python app.py`.
 
 ## Fonctions du pilote automatique
 
@@ -52,8 +53,17 @@ Le simulateur imite la découverte des variables, la télémétrie, les commande
 | Rétention | Vidange automatique entre 75 et 50 % |
 | Pressuriseur | Commande de la vanne motorisée entre 50 et 60 % |
 | Primaire | Appoint d’eau entre 80 et 90 % |
+| Chimie | Détection optionnelle du module, maintien du bore par dosage/filtration, sécurités des pompes |
 
 Le pilote ne commande que les variables annoncées comme accessibles en écriture par la version courante du jeu. Une commande absente est ignorée et inscrite dans le journal. Les opérations qui exigent encore une interaction physique du personnage dans le jeu ne peuvent pas être automatisées par le webserveur.
+
+### Module chimique optionnel
+
+Une partie peut être lancée sans le module chimique. L’application distingue automatiquement les cas suivants : variables absentes, pompes non installées, camion absent ou déconnecté, lecture seule, défaut et module prêt. Un module absent ne produit aucune alarme et ne bloque aucune autre zone du pilote.
+
+Lorsque le module est prêt, le pilote utilise exclusivement les commandes POST `CHEM_BORON_DOSAGE_ORDERED_RATE` et `CHEM_BORON_FILTER_ORDERED_SPEED`, limitées à la plage `0–100 %`. Le dosage et la filtration sont mutuellement exclusifs. Une pompe à sec, en surcharge, à maintenir ou privée d’énergie provoque l’arrêt des commandes chimiques.
+
+Si la consigne de bore est laissée vide, la concentration `CHEM_BORON_PPM` présente lors de l’activation est capturée et maintenue. Cela évite d’imposer une valeur arbitraire à une partie existante. Une consigne explicite, une bande morte et une puissance maximale peuvent être configurées dans **Réglages**.
 
 ## Réglages importants
 
@@ -63,6 +73,7 @@ Ils sont accessibles depuis l’onglet **Réglages** et conservés dans `config.
 - périodes de lecture et de commande ;
 - température cible du cœur ;
 - marge de production au-dessus de la demande ;
+- consigne de bore facultative, bande morte et puissance chimique maximale ;
 - activation individuelle de chaque zone automatique.
 
 Le pilotage automatique est volontairement arrêté à chaque lancement (`auto_start: false`). Pour le démarrer immédiatement, cette valeur peut être changée manuellement, mais ce n’est pas recommandé pendant les premiers essais.
@@ -133,4 +144,4 @@ Les tests utilisent le simulateur local et n’envoient aucune commande au jeu.
 
 ## Références techniques
 
-Le protocole public du jeu utilise notamment `WEBSERVER_LIST_VARIABLES`, `WEBSERVER_BATCH_GET`, les commandes POST et `VALVE_PANEL_JSON`. Le projet communautaire [NuCon](https://git.dominik-roth.eu/dodox/NuCon) a servi de référence de compatibilité pour les noms récents de variables et les plages de conduite. Aucun code de NuCon n’est inclus dans cette application.
+Le protocole public du jeu utilise notamment `WEBSERVER_LIST_VARIABLES`, `WEBSERVER_BATCH_GET`, les commandes POST et `VALVE_PANEL_JSON`. Le projet Python communautaire [NuCon](https://git.dominik-roth.eu/dodox/NuCon) a servi de référence de compatibilité pour les noms récents de variables, les états des pompes et les plages de conduite. [LibNuclearesWeb](https://github.com/ggppjj/LibNuclearesWeb) documente une approche objet équivalente pour .NET 8/9. Ces deux projets sont sous licence MIT ; aucun de leur code n’est inclus dans cette application et aucune dépendance externe n’est nécessaire.

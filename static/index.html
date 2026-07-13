@@ -100,6 +100,10 @@
               <div class="system-icon">P</div><div class="system-copy"><strong>Circuit primaire</strong><span>Niveau global</span></div>
               <div class="bar"><i id="primary-bar"></i></div><b id="primary-level">— %</b>
             </div>
+            <div class="system-row" data-system="chemistry">
+              <div class="system-icon">B</div><div class="system-copy"><strong>Chimie primaire</strong><span id="chemistry-detail">Détection du module…</span></div>
+              <span id="chemistry-status" class="status-pill">—</span><b id="boron-ppm">— ppm</b>
+            </div>
             <div class="system-row" data-system="pressurizer">
               <div class="system-icon">R</div><div class="system-copy"><strong>Pressuriseur</strong><span>Réserve d’appoint</span></div>
               <div class="bar"><i id="pressurizer-bar"></i></div><b id="pressurizer">— %</b>
@@ -143,6 +147,8 @@
           <article class="panel form-panel">
             <header><h2>Objectifs automatiques</h2></header>
             <div class="form-row"><label>Température cœur (°C)<input id="target-temp" type="number" min="250" max="390" step="1"></label><label>Marge réseau (MW)<input id="grid-buffer" type="number" min="0" max="100" step="1"></label></div>
+            <div class="form-row"><label>Consigne bore (ppm)<input id="target-boron" type="number" min="0" max="10000" step="1" placeholder="Auto : valeur actuelle"></label><label>Bande morte bore (ppm)<input id="boron-deadband" type="number" min="0.1" max="1000" step="0.1"></label></div>
+            <label>Puissance chimique maximale (%)<input id="boron-max-output" type="number" min="1" max="100" step="1"></label>
             <div id="area-toggles" class="area-toggles"></div>
           </article>
           <div class="save-row"><span id="save-status"></span><button class="primary-button" type="submit">Enregistrer les réglages</button></div>

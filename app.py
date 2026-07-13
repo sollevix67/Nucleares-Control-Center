@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-APP_VERSION = "0.1.2"
+APP_VERSION = "0.2.0"
 BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 USER_ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 STATIC_DIR = BUNDLE_ROOT / "static"
@@ -50,6 +50,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "grid_follow": True,
         "grid_buffer_mw": 10.0,
         "train_power_cap_kw": 100000.0,
+        "target_boron_ppm": None,
+        "boron_deadband_ppm": 5.0,
+        "boron_max_output_pct": 20.0,
+        "boron_gain_pct_per_ppm": 0.5,
         "areas": {
             "reactor": True,
             "grid": True,
@@ -58,6 +62,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
             "retention": True,
             "pressurizer": True,
             "primary_makeup": True,
+            "chemistry": True,
         },
     },
     "thresholds": {
@@ -107,8 +112,10 @@ def utc_now() -> str:
 
 
 def as_number(value: Any, default: float = 0.0) -> float:
-    if value is None or isinstance(value, bool):
-        return float(value or 0)
+    if value is None:
+        return float(default)
+    if isinstance(value, bool):
+        return float(value)
     try:
         number = float(str(value).replace(",", "."))
         return number if math.isfinite(number) else default
@@ -340,11 +347,16 @@ class ControlCenter:
         "CONDENSER_VOLUME", "CONDENSER_VAPOR_VOLUME", "CONDENSER_VACUUM",
         "COOLANT_CORE_PRIMARY_LOOP_LEVEL", "CORE_PRIMARY_CIRCUIT_COOLING_TANK_VOLUME",
         "VACUUM_RETENTION_TANK_VOLUME",
+        "CHEM_BORON_PPM", "CHEM_BORON_DOSAGE_ACTUAL", "CHEM_BORON_FILTER_ACTUAL",
+        "CORE_IODINE_GENERATION", "CORE_IODINE_CUMULATIVE",
+        "CORE_XENON_GENERATION", "CORE_XENON_CUMULATIVE",
     ]
 
     PRESSURIZER_VALVE = "Valvula_Pressurizer_Spray"
     PRESSURIZER_MAX = 176717.0
     RETENTION_MAX = 40000.0
+    CHEM_DOSAGE_COMMAND = "CHEM_BORON_DOSAGE_ORDERED_RATE"
+    CHEM_FILTER_COMMAND = "CHEM_BORON_FILTER_ORDERED_SPEED"
 
     def __init__(self, config: dict[str, Any]):
         self.config = config
@@ -370,6 +382,8 @@ class ControlCenter:
         self.condenser_fill_on = False
         self.rod_integral = 0.0
         self.dynamic_temp_setpoint = float(config["autopilot"]["target_core_temp"])
+        configured_boron = config["autopilot"].get("target_boron_ppm")
+        self.dynamic_boron_target: float | None = None if configured_boron is None else float(configured_boron)
         self.train_pid = {i: PID(0.00002, 0.000002, 0.0, -0.3, 0.2) for i in range(3)}
         self.secondary_pid = {i: PID(0.0005, 0.00005, 0.001, -2.0, 2.0) for i in range(3)}
         self.threads: list[threading.Thread] = []
@@ -489,11 +503,29 @@ class ControlCenter:
         self._set_alarm("primary_level", "critical", "Niveau circuit primaire bas", f"{primary:.1f} %",
                         "COOLANT_CORE_PRIMARY_LOOP_LEVEL" in s and primary < t["primary_level_low"])
 
+        chemistry = self._chemistry_info(s)
         for name, value in s.items():
+            if name.startswith("CHEMICAL_") and not chemistry["installed"]:
+                continue
             if name.endswith("_DRY_STATUS"):
                 self._set_alarm("dry_" + name, "critical", "Pompe sans fluide", name, as_number(value) == 1)
             elif name.endswith("_OVERLOAD_STATUS"):
                 self._set_alarm("overload_" + name, "warning", "Pompe en surcharge", name, as_number(value) == 1)
+
+        chemistry_requested = self.autopilot_enabled and bool(self.config["autopilot"]["areas"].get("chemistry"))
+        self._set_alarm(
+            "chemistry_connection", "warning", "Module chimique indisponible",
+            chemistry["message"], chemistry_requested and chemistry["installed"] and not chemistry["connected"],
+        )
+        self._set_alarm(
+            "chemistry_fault", "critical", "Défaut du module chimique",
+            chemistry.get("fault_detail", ""), chemistry["installed"] and chemistry["fault"],
+        )
+        self._set_alarm(
+            "chemistry_commands", "warning", "Commandes chimiques non exposées",
+            "Le webserveur ne permet pas le dosage et la filtration.",
+            chemistry_requested and chemistry["installed"] and not chemistry["commands_exposed"],
+        )
 
     def _write(self, area: str, variable: str, value: Any, reason: str, cooldown: float = 2.0) -> bool:
         now = time.monotonic()
@@ -530,6 +562,66 @@ class ControlCenter:
                 return name
         return None
 
+    def _chemistry_info(self, s: dict[str, Any]) -> dict[str, Any]:
+        signal_names = {
+            "CHEM_TRUCK_IN_ZONE", "CHEM_TRUCK_CONNECTED", "CHEM_BORON_PPM",
+            "CHEMICAL_DOSING_PUMP_STATUS", "CHEMICAL_FILTER_PUMP_STATUS",
+        }
+        signals_present = any(name in s for name in signal_names)
+        commands_exposed = {self.CHEM_DOSAGE_COMMAND, self.CHEM_FILTER_COMMAND}.issubset(self.writable)
+        raw_ppm = s.get("CHEM_BORON_PPM")
+        ppm = None if raw_ppm is None else as_number(raw_ppm)
+        dosing_status = int(as_number(s.get("CHEMICAL_DOSING_PUMP_STATUS"), 4))
+        filter_status = int(as_number(s.get("CHEMICAL_FILTER_PUMP_STATUS"), 4))
+        both_not_installed = dosing_status == 4 and filter_status == 4
+        installed = signals_present and ppm is not None and not both_not_installed
+        in_zone = bool(s.get("CHEM_TRUCK_IN_ZONE", False))
+        truck_connected = bool(s.get("CHEM_TRUCK_CONNECTED", False))
+        connected = in_zone and truck_connected
+
+        faults: list[str] = []
+        for label, status in (("dosage", dosing_status), ("filtration", filter_status)):
+            if installed and status == 3:
+                faults.append(f"pompe de {label} à maintenir")
+            elif installed and status == 4:
+                faults.append(f"pompe de {label} non installée")
+            elif installed and status == 5:
+                faults.append(f"énergie insuffisante pour la pompe de {label}")
+        for label, prefix in (("dosage", "CHEMICAL_DOSING_PUMP"), ("filtration", "CHEMICAL_FILTER_PUMP")):
+            if as_number(s.get(prefix + "_DRY_STATUS"), 4) == 1:
+                faults.append(f"pompe de {label} sans fluide")
+            if as_number(s.get(prefix + "_OVERLOAD_STATUS"), 4) == 1:
+                faults.append(f"pompe de {label} en surcharge")
+
+        if not signals_present and not commands_exposed:
+            status, message = "unavailable", "Variables chimiques absentes du webserveur"
+        elif not installed:
+            status, message = "not_installed", "Module chimique non installé dans cette partie"
+        elif faults:
+            status, message = "fault", "; ".join(faults)
+        elif not connected:
+            status, message = "waiting_truck", "Camion chimique absent ou déconnecté"
+        elif not commands_exposed:
+            status, message = "read_only", "Mesures disponibles, commandes POST absentes"
+        else:
+            status, message = "ready", "Dosage et filtration disponibles"
+
+        return {
+            "status": status,
+            "message": message,
+            "available": signals_present or commands_exposed,
+            "installed": installed,
+            "connected": connected,
+            "ready": status == "ready",
+            "commands_exposed": commands_exposed,
+            "fault": bool(faults),
+            "fault_detail": "; ".join(faults),
+            "ppm": ppm,
+            "target_ppm": self.dynamic_boron_target,
+            "dosage_actual": None if s.get("CHEM_BORON_DOSAGE_ACTUAL") is None else as_number(s.get("CHEM_BORON_DOSAGE_ACTUAL")),
+            "filter_actual": None if s.get("CHEM_BORON_FILTER_ACTUAL") is None else as_number(s.get("CHEM_BORON_FILTER_ACTUAL")),
+        }
+
     def emergency_scram(self, reason: str = "Commande opérateur") -> None:
         command = self._first_available("CORE_SCRAM_BUTTON", "SCRAM_BUTTON", "RODS_POS_ORDERED")
         if not command:
@@ -561,6 +653,8 @@ class ControlCenter:
             self._control_pressurizer(s)
         if areas.get("primary_makeup"):
             self._control_primary_makeup(s)
+        if areas.get("chemistry"):
+            self._control_chemistry(s)
 
     def _control_reactor(self, s: dict[str, Any]) -> None:
         actual_name = "ROD_BANK_POS_0_ACTUAL" if "ROD_BANK_POS_0_ACTUAL" in s else "RODS_POS_ACTUAL"
@@ -671,6 +765,76 @@ class ControlCenter:
             if self._write("primaire", command, False, "Appoint primaire atteint 90 %"):
                 self.feedwater_on = False
 
+    def _stop_chemistry(self, s: dict[str, Any], reason: str) -> None:
+        dosage = max(
+            as_number(s.get("CHEM_BORON_DOSAGE_ORDERED")),
+            as_number(s.get("CHEM_BORON_DOSAGE_ACTUAL")),
+            as_number(self.last_write.get(self.CHEM_DOSAGE_COMMAND, (0, 0))[0]),
+        )
+        filtering = max(
+            as_number(s.get("CHEM_BORON_FILTER_ORDERED")),
+            as_number(s.get("CHEM_BORON_FILTER_ACTUAL")),
+            as_number(self.last_write.get(self.CHEM_FILTER_COMMAND, (0, 0))[0]),
+        )
+        if dosage > 0 and self.CHEM_DOSAGE_COMMAND in self.writable:
+            self._write("chimie", self.CHEM_DOSAGE_COMMAND, 0.0, reason, cooldown=0)
+        if filtering > 0 and self.CHEM_FILTER_COMMAND in self.writable:
+            self._write("chimie", self.CHEM_FILTER_COMMAND, 0.0, reason, cooldown=0)
+
+    def _control_chemistry(self, s: dict[str, Any]) -> None:
+        chemistry = self._chemistry_info(s)
+        if not chemistry["installed"]:
+            return
+        if not chemistry["ready"]:
+            self._stop_chemistry(s, chemistry["message"])
+            return
+
+        ppm = chemistry["ppm"]
+        if ppm is None:
+            return
+        if self.dynamic_boron_target is None:
+            self.dynamic_boron_target = round(float(ppm), 2)
+            self.store.record_event(
+                "chimie", "Consigne de bore capturée",
+                {"target_boron_ppm": self.dynamic_boron_target},
+            )
+
+        target = float(self.dynamic_boron_target)
+        settings = self.config["autopilot"]
+        deadband = float(settings["boron_deadband_ppm"])
+        maximum = float(settings["boron_max_output_pct"])
+        gain = float(settings.get("boron_gain_pct_per_ppm", 0.5))
+        error = target - float(ppm)
+
+        if error > deadband:
+            output = round(min(maximum, max(1.0, (error - deadband) * gain)), 2)
+            filtering = max(
+                as_number(s.get("CHEM_BORON_FILTER_ORDERED")),
+                as_number(s.get("CHEM_BORON_FILTER_ACTUAL")),
+                as_number(self.last_write.get(self.CHEM_FILTER_COMMAND, (0, 0))[0]),
+            )
+            if filtering > 0 and not self._write("chimie", self.CHEM_FILTER_COMMAND, 0.0, "Filtration arrêtée avant dosage", cooldown=0):
+                return
+            self._write(
+                "chimie", self.CHEM_DOSAGE_COMMAND, output,
+                f"Bore {ppm:.1f} ppm sous la consigne {target:.1f} ppm", cooldown=10,
+            )
+        elif error < -deadband:
+            output = round(min(maximum, max(1.0, (-error - deadband) * gain)), 2)
+            dosage = max(
+                as_number(s.get("CHEM_BORON_DOSAGE_ORDERED")),
+                as_number(s.get("CHEM_BORON_DOSAGE_ACTUAL")),
+                as_number(self.last_write.get(self.CHEM_DOSAGE_COMMAND, (0, 0))[0]),
+            )
+            if dosage > 0 and not self._write("chimie", self.CHEM_DOSAGE_COMMAND, 0.0, "Dosage arrêté avant filtration", cooldown=0):
+                return
+            self._write(
+                "chimie", self.CHEM_FILTER_COMMAND, output,
+                f"Bore {ppm:.1f} ppm au-dessus de la consigne {target:.1f} ppm", cooldown=10,
+            )
+        else:
+            self._stop_chemistry(s, f"Bore stabilisé à {ppm:.1f} ppm")
+
     def snapshot(self) -> dict[str, Any]:
         with self.lock:
             return {
@@ -689,7 +853,10 @@ class ControlCenter:
                     "target_core_temp": round(self.dynamic_temp_setpoint, 2),
                     "configured_core_temp": self.config["autopilot"]["target_core_temp"],
                     "grid_buffer_mw": self.config["autopilot"]["grid_buffer_mw"],
+                    "target_boron_ppm": self.dynamic_boron_target,
+                    "configured_boron_ppm": self.config["autopilot"].get("target_boron_ppm"),
                 },
+                "chemistry": self._chemistry_info(self.state),
                 "actions": [a.as_dict() for a in list(self.actions)[:50]],
             }
 
@@ -702,22 +869,32 @@ class ControlCenter:
             return True
 
     def set_autopilot(self, enabled: bool) -> None:
+        state: dict[str, Any] = {}
         with self.lock:
             self.autopilot_enabled = enabled
             if not enabled:
+                state = dict(self.state)
                 self.retention_draining = False
                 self.pressurizer_spraying = False
                 self.rod_integral = 0.0
                 for pid in [*self.train_pid.values(), *self.secondary_pid.values()]:
                     pid.reset()
                 self.dynamic_temp_setpoint = float(self.config["autopilot"]["target_core_temp"])
+                if self.config["autopilot"].get("target_boron_ppm") is None:
+                    self.dynamic_boron_target = None
+        if not enabled:
+            self._stop_chemistry(state, "Arrêt du pilote automatique")
         self.store.record_event("autopilot", "Pilote automatique activé" if enabled else "Pilote automatique arrêté")
 
     def update_config(self, updates: dict[str, Any]) -> None:
         allowed_top = {"game_url", "poll_seconds", "control_seconds", "autopilot", "thresholds"}
         sanitized = {key: value for key, value in updates.items() if key in allowed_top}
+        stop_chemistry = False
+        url_changed = False
+        state: dict[str, Any] = {}
         with self.lock:
             old_url = self.config["game_url"]
+            old_chemistry = bool(self.config["autopilot"]["areas"].get("chemistry"))
             candidate = deep_merge(self.config, sanitized)
             if not 0.5 <= float(candidate["poll_seconds"]) <= 30:
                 raise ValueError("poll_seconds doit être compris entre 0,5 et 30")
@@ -725,11 +902,26 @@ class ControlCenter:
                 raise ValueError("control_seconds doit être compris entre 1 et 60")
             if not 250 <= float(candidate["autopilot"]["target_core_temp"]) <= 390:
                 raise ValueError("La température cible doit être comprise entre 250 et 390 °C")
+            target_boron = candidate["autopilot"].get("target_boron_ppm")
+            if target_boron is not None and not 0 <= float(target_boron) <= 10000:
+                raise ValueError("La consigne de bore doit être comprise entre 0 et 10 000 ppm")
+            if not 0.1 <= float(candidate["autopilot"]["boron_deadband_ppm"]) <= 1000:
+                raise ValueError("La bande morte du bore doit être comprise entre 0,1 et 1 000 ppm")
+            if not 1 <= float(candidate["autopilot"]["boron_max_output_pct"]) <= 100:
+                raise ValueError("La puissance chimique maximale doit être comprise entre 1 et 100 %")
             self.config = candidate
+            stop_chemistry = self.autopilot_enabled and old_chemistry and not bool(candidate["autopilot"]["areas"].get("chemistry"))
+            if stop_chemistry:
+                state = dict(self.state)
             if not self.autopilot_enabled:
                 self.dynamic_temp_setpoint = float(candidate["autopilot"]["target_core_temp"])
+            self.dynamic_boron_target = None if target_boron is None else float(target_boron)
             save_config(self.config)
-            if self.config["game_url"] != old_url:
+            url_changed = self.config["game_url"] != old_url
+        if stop_chemistry:
+            self._stop_chemistry(state, "Zone chimique désactivée")
+        if url_changed:
+            with self.lock:
                 self.client = GameClient(self.config["game_url"])
                 self.readable, self.writable = [], set()
 

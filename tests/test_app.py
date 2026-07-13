@@ -16,8 +16,11 @@ from mock_game import MockHandler, Plant
 
 
 class MockServer:
+    def __init__(self, chemistry_enabled=False):
+        self.chemistry_enabled = chemistry_enabled
+
     def __enter__(self):
-        self.plant = Plant()
+        self.plant = Plant(chemistry_enabled=self.chemistry_enabled)
         MockHandler.plant = self.plant
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), MockHandler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -81,6 +84,73 @@ class ControlTests(unittest.TestCase):
                 self.assertIn("ROD_BANK_POS_0_ORDERED", commands)
                 self.assertIn("MSCV_0_OPENING_ORDERED", commands)
                 self.assertIn("CONDENSER_CIRCULATION_PUMP_ORDERED_SPEED", commands)
+                self.assertNotIn("CHEM_BORON_DOSAGE_ORDERED_RATE", commands)
+                self.assertEqual(center._chemistry_info(state)["status"], "unavailable")
+            finally:
+                app.DATA_DIR = old_data
+
+    def test_chemistry_captures_current_ppm(self):
+        with MockServer(chemistry_enabled=True) as mock, tempfile.TemporaryDirectory() as temp:
+            old_data = app.DATA_DIR; app.DATA_DIR = Path(temp)
+            try:
+                center = app.ControlCenter(self.config(mock.url))
+                center.readable, center.writable = center.client.discover()
+                state = center.client.batch_get(center.readable)
+                center._control_chemistry(state)
+                self.assertEqual(center.dynamic_boron_target, 1000.0)
+                self.assertEqual(center._chemistry_info(state)["status"], "ready")
+                chemistry_commands = [name for name, _ in mock.plant.commands if name.startswith("CHEM_")]
+                self.assertEqual(chemistry_commands, [])
+            finally:
+                app.DATA_DIR = old_data
+
+    def test_chemistry_doses_and_filters(self):
+        with MockServer(chemistry_enabled=True) as mock, tempfile.TemporaryDirectory() as temp:
+            old_data = app.DATA_DIR; app.DATA_DIR = Path(temp)
+            try:
+                config = self.config(mock.url); config["autopilot"]["target_boron_ppm"] = 1000.0
+                center = app.ControlCenter(config)
+                center.readable, center.writable = center.client.discover()
+                with mock.plant.lock:
+                    mock.plant.values["CHEM_BORON_PPM"] = 950.0
+                state = center.client.batch_get(center.readable)
+                center._control_chemistry(state)
+                commands = dict(mock.plant.commands)
+                self.assertGreater(commands["CHEM_BORON_DOSAGE_ORDERED_RATE"], 0)
+
+                with mock.plant.lock:
+                    mock.plant.commands.clear()
+                    mock.plant.values["CHEM_BORON_PPM"] = 1050.0
+                center.last_write.clear()
+                state = center.client.batch_get(center.readable)
+                center._control_chemistry(state)
+                commands = dict(mock.plant.commands)
+                self.assertEqual(commands["CHEM_BORON_DOSAGE_ORDERED_RATE"], 0)
+                self.assertGreater(commands["CHEM_BORON_FILTER_ORDERED_SPEED"], 0)
+            finally:
+                app.DATA_DIR = old_data
+
+    def test_chemistry_not_installed_is_silent(self):
+        with MockServer() as mock, tempfile.TemporaryDirectory() as temp:
+            old_data = app.DATA_DIR; app.DATA_DIR = Path(temp)
+            try:
+                center = app.ControlCenter(self.config(mock.url))
+                center.readable, center.writable = center.client.discover()
+                center.writable.update({center.CHEM_DOSAGE_COMMAND, center.CHEM_FILTER_COMMAND})
+                state = center.client.batch_get(center.readable)
+                state.update({
+                    "CHEM_BORON_PPM": None,
+                    "CHEMICAL_DOSING_PUMP_STATUS": 4,
+                    "CHEMICAL_FILTER_PUMP_STATUS": 4,
+                    "CHEM_TRUCK_IN_ZONE": False,
+                    "CHEM_TRUCK_CONNECTED": False,
+                })
+                center.autopilot_enabled = True
+                center._evaluate_alarms(state)
+                center._control_chemistry(state)
+                self.assertEqual(center._chemistry_info(state)["status"], "not_installed")
+                self.assertNotIn("chemistry_connection", center.alarms)
+                self.assertFalse(any(name.startswith("CHEM_") for name, _ in mock.plant.commands))
             finally:
                 app.DATA_DIR = old_data
 

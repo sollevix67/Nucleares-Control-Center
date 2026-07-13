@@ -40,6 +40,16 @@ WRITABLE = {
     "CONDENSER_CIRCULATION_PUMP_ORDERED_SPEED", "STEAM_EJECTOR_CONDENSER_RETURN_VALVE",
     "FREIGHT_PUMP_FEEDWATER_SWITCH", "VALVE_OPEN", "VALVE_CLOSE", "VALVE_OFF",
 }
+CHEM_READABLE = [
+    "CHEM_TRUCK_IN_ZONE", "CHEM_TRUCK_CONNECTED", "CHEM_BORON_DOSAGE_ORDERED",
+    "CHEM_BORON_DOSAGE_ACTUAL", "CHEM_BORON_FILTER_ORDERED", "CHEM_BORON_FILTER_ACTUAL",
+    "CHEM_BORON_PPM", "CHEMICAL_DOSING_PUMP_STATUS", "CHEMICAL_DOSING_PUMP_DRY_STATUS",
+    "CHEMICAL_DOSING_PUMP_OVERLOAD_STATUS", "CHEMICAL_FILTER_PUMP_STATUS",
+    "CHEMICAL_FILTER_PUMP_DRY_STATUS", "CHEMICAL_FILTER_PUMP_OVERLOAD_STATUS",
+    "CORE_IODINE_GENERATION", "CORE_IODINE_CUMULATIVE", "CORE_XENON_GENERATION",
+    "CORE_XENON_CUMULATIVE",
+]
+CHEM_WRITABLE = {"CHEM_BORON_DOSAGE_ORDERED_RATE", "CHEM_BORON_FILTER_ORDERED_SPEED"}
 for i in range(3):
     WRITABLE |= {
         f"MSCV_{i}_OPENING_ORDERED", f"STEAM_TURBINE_{i}_BYPASS_ORDERED",
@@ -49,9 +59,11 @@ for i in range(3):
 
 
 class Plant:
-    def __init__(self) -> None:
+    def __init__(self, chemistry_enabled: bool = False) -> None:
         self.lock = threading.RLock()
         self.running = True
+        self.readable = list(READABLE)
+        self.writable = set(WRITABLE)
         self.values: dict[str, Any] = {
             "GAME_VERSION": "2.2.25.213", "GAME_SIM_SPEED": 1, "CORE_TEMP": 329.0,
             "CORE_TEMP_MAX": 450.0, "CORE_PRESSURE": 151.0, "CORE_PRESSURE_MAX": 180.0,
@@ -63,6 +75,21 @@ class Plant:
             "CORE_PRIMARY_CIRCUIT_COOLING_TANK_VOLUME": 106030.0, "FREIGHT_PUMP_FEEDWATER_ACTIVE": False,
             "VACUUM_RETENTION_TANK_VOLUME": 22000.0,
         }
+        if chemistry_enabled:
+            self.readable.extend(CHEM_READABLE)
+            self.writable.update(CHEM_WRITABLE)
+            self.values.update({
+                "CHEM_TRUCK_IN_ZONE": True, "CHEM_TRUCK_CONNECTED": True,
+                "CHEM_BORON_DOSAGE_ORDERED": 0.0, "CHEM_BORON_DOSAGE_ACTUAL": 0.0,
+                "CHEM_BORON_FILTER_ORDERED": 0.0, "CHEM_BORON_FILTER_ACTUAL": 0.0,
+                "CHEM_BORON_PPM": 1000.0,
+                "CHEMICAL_DOSING_PUMP_STATUS": 0, "CHEMICAL_DOSING_PUMP_DRY_STATUS": 4,
+                "CHEMICAL_DOSING_PUMP_OVERLOAD_STATUS": 4,
+                "CHEMICAL_FILTER_PUMP_STATUS": 0, "CHEMICAL_FILTER_PUMP_DRY_STATUS": 4,
+                "CHEMICAL_FILTER_PUMP_OVERLOAD_STATUS": 4,
+                "CORE_IODINE_GENERATION": 0.0, "CORE_IODINE_CUMULATIVE": 0.0,
+                "CORE_XENON_GENERATION": 0.0, "CORE_XENON_CUMULATIVE": 0.0,
+            })
         self.commands: list[tuple[str, Any]] = []
         for i in range(3):
             self.values.update({
@@ -98,6 +125,16 @@ class Plant:
                 self.values["CONDENSER_CIRCULATION_PUMP_ACTIVE"] = bool(value)
             elif variable == "FREIGHT_PUMP_FEEDWATER_SWITCH":
                 self.values["FREIGHT_PUMP_FEEDWATER_ACTIVE"] = bool(value)
+            elif variable == "CHEM_BORON_DOSAGE_ORDERED_RATE":
+                rate = max(0.0, min(100.0, float(value)))
+                self.values["CHEM_BORON_DOSAGE_ORDERED"] = rate
+                self.values["CHEM_BORON_DOSAGE_ACTUAL"] = rate
+                self.values["CHEMICAL_DOSING_PUMP_STATUS"] = 2 if rate > 0 else 0
+            elif variable == "CHEM_BORON_FILTER_ORDERED_SPEED":
+                speed = max(0.0, min(100.0, float(value)))
+                self.values["CHEM_BORON_FILTER_ORDERED"] = speed
+                self.values["CHEM_BORON_FILTER_ACTUAL"] = speed
+                self.values["CHEMICAL_FILTER_PUMP_STATUS"] = 2 if speed > 0 else 0
             elif variable in self.values:
                 self.values[variable] = value
 
@@ -130,6 +167,10 @@ class Plant:
                     self.values["CONDENSER_VAPOR_VOLUME"] = max(30000, self.values["CONDENSER_VAPOR_VOLUME"] - 120)
                 if self.values["FREIGHT_PUMP_FEEDWATER_ACTIVE"]:
                     self.values["COOLANT_CORE_PRIMARY_LOOP_LEVEL"] = min(100, self.values["COOLANT_CORE_PRIMARY_LOOP_LEVEL"] + .08)
+                if "CHEM_BORON_PPM" in self.values:
+                    dosage = float(self.values["CHEM_BORON_DOSAGE_ACTUAL"])
+                    filtering = float(self.values["CHEM_BORON_FILTER_ACTUAL"])
+                    self.values["CHEM_BORON_PPM"] = max(0.0, self.values["CHEM_BORON_PPM"] + (dosage - filtering) * .002)
             time.sleep(0.2)
 
     def close(self) -> None:
@@ -147,7 +188,7 @@ class MockHandler(BaseHTTPRequestHandler):
         query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
         variable = query.get("variable", [""])[0].upper()
         if variable == "WEBSERVER_LIST_VARIABLES":
-            self._send(f"GET:{','.join(READABLE)}\nPOST:{','.join(sorted(WRITABLE))}", "text/plain")
+            self._send(f"GET:{','.join(self.plant.readable)}\nPOST:{','.join(sorted(self.plant.writable))}", "text/plain")
         elif variable == "WEBSERVER_BATCH_GET":
             names = query.get("value", [""])[0].split(",")
             with self.plant.lock:
@@ -164,7 +205,7 @@ class MockHandler(BaseHTTPRequestHandler):
         query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
         variable = query.get("variable", [""])[0].upper()
         value = query.get("value", [""])[0]
-        if variable not in WRITABLE:
+        if variable not in self.plant.writable:
             self._send("NOT FOUND", "text/plain", 404)
             return
         self.plant.set(variable, value)
@@ -176,8 +217,8 @@ class MockHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(raw))); self.end_headers(); self.wfile.write(raw)
 
 
-def run(port: int = 8785) -> None:
-    plant = Plant(); MockHandler.plant = plant; server = ThreadingHTTPServer(("127.0.0.1", port), MockHandler)
+def run(port: int = 8785, chemistry_enabled: bool = False) -> None:
+    plant = Plant(chemistry_enabled=chemistry_enabled); MockHandler.plant = plant; server = ThreadingHTTPServer(("127.0.0.1", port), MockHandler)
     print(f"Simulateur Nucleares sur http://127.0.0.1:{port}/ — Ctrl+C pour arrêter")
     try:
         server.serve_forever()
@@ -189,4 +230,5 @@ def run(port: int = 8785) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(); parser.add_argument("--port", type=int, default=8785)
-    run(parser.parse_args().port)
+    parser.add_argument("--chemistry", action="store_true", help="Activer le module chimique simulé")
+    args = parser.parse_args(); run(args.port, args.chemistry)
