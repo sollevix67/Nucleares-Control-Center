@@ -12,7 +12,7 @@
   "equipment_overrides": {
     "emergency_generators": {
       "1": "auto",
-      "2": "not_installed"
+      "2": "auto"
     }
   },
   "autopilot": {

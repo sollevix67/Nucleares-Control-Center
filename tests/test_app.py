@@ -70,6 +70,10 @@ class ControlTests(unittest.TestCase):
         config["autopilot"]["auto_start"] = False
         return config
 
+    def test_emergency_generators_default_to_automatic_detection(self):
+        overrides = app.DEFAULT_CONFIG["equipment_overrides"]["emergency_generators"]
+        self.assertEqual(overrides, {"1": "auto", "2": "auto"})
+
     def test_alarm_and_derived_values(self):
         with MockServer() as mock, tempfile.TemporaryDirectory() as temp:
             old_data = app.DATA_DIR; app.DATA_DIR = Path(temp)
@@ -106,9 +110,9 @@ class ControlTests(unittest.TestCase):
                 self.assertEqual(emergency[0]["fuel"], 486.0)
                 self.assertEqual(emergency[0]["fuel_unit"], "L")
                 self.assertEqual(emergency[0]["pressurizer"], "PRESSURISÉ")
-                self.assertFalse(emergency[1]["installed"])
-                self.assertEqual(emergency[1]["status"], "NON INSTALLÉ")
-                self.assertEqual(emergency[1]["installation_source"], "RÉGLAGE MANUEL")
+                self.assertTrue(emergency[1]["installed"])
+                self.assertEqual(emergency[1]["status"], "EN ATTENTE")
+                self.assertEqual(emergency[1]["installation_source"], "DÉTECTION AUTO")
                 electrical = center.derived["electrical"]
                 self.assertEqual(len(electrical["transformers"]), 3)
                 self.assertTrue(electrical["transformers"][0]["available"])
@@ -161,10 +165,10 @@ class ControlTests(unittest.TestCase):
                 center = app.ControlCenter(config)
                 state = dict(mock.plant.values)
                 automatic = center._derive(state)["generators"]["emergency"][1]
-                self.assertFalse(automatic["installed"])
-                config["equipment_overrides"]["emergency_generators"]["2"] = "installed"
+                self.assertTrue(automatic["installed"])
+                config["equipment_overrides"]["emergency_generators"]["2"] = "not_installed"
                 forced = center._derive(state)["generators"]["emergency"][1]
-                self.assertTrue(forced["installed"])
+                self.assertFalse(forced["installed"])
                 self.assertEqual(forced["installation_source"], "RÉGLAGE MANUEL")
             finally:
                 app.DATA_DIR = old_data
@@ -465,6 +469,8 @@ class ControlTests(unittest.TestCase):
                 self.assertIn("pool-capacity", html); self.assertIn("external-capacity", html)
                 self.assertIn('id="pool-capacity" type="number" min="1" max="10000000" step="1"', html)
                 self.assertIn('id="external-capacity" type="number" min="1" max="10000000" step="1"', html)
+                self.assertIn('id="xenon-rise-guard" type="number" min="0.01" max="100" step="0.01"', html)
+                self.assertIn('id="xenon-power-ramp" type="number" min="0.1" max="100" step="0.1"', html)
                 self.assertIn('data-supervision-zone="reactor"', html)
                 self.assertIn('data-supervision-zone="chemistry"', html)
                 self.assertIn('id="poison-chart"', html)
