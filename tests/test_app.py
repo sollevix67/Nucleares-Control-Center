@@ -159,6 +159,9 @@ class ControlTests(unittest.TestCase):
         self.assertEqual(app.game_text_fr("NOREACTIVO"), "NON RÉACTIF")
         self.assertEqual(app.game_text_fr("No reactivo"), "NON RÉACTIF")
         self.assertEqual(app.game_text_fr("NO_REACTIVO"), "NON RÉACTIF")
+        self.assertEqual(app.game_text_fr("REACTIVO"), "RÉACTIF")
+        self.assertEqual(app.game_text_fr("OPERACIONAL"), "OPÉRATIONNEL")
+        self.assertEqual(app.game_text_fr("CIRCULANDO"), "EN CIRCULATION")
 
     def test_nonreactive_core_state_is_translated(self):
         with MockServer() as mock, tempfile.TemporaryDirectory() as temp:
@@ -167,6 +170,16 @@ class ControlTests(unittest.TestCase):
                 center = app.ControlCenter(self.config(mock.url))
                 state = dict(mock.plant.values); state["CORE_STATE"] = "NOREACTIVO"
                 self.assertEqual(center._derive(state)["core_state"], "NON RÉACTIF")
+            finally:
+                app.DATA_DIR = old_data
+
+    def test_reactive_core_state_is_translated(self):
+        with MockServer() as mock, tempfile.TemporaryDirectory() as temp:
+            old_data = app.DATA_DIR; app.DATA_DIR = Path(temp)
+            try:
+                center = app.ControlCenter(self.config(mock.url))
+                state = dict(mock.plant.values); state["CORE_STATE"] = "REACTIVO"
+                self.assertEqual(center._derive(state)["core_state"], "RÉACTIF")
             finally:
                 app.DATA_DIR = old_data
 
@@ -506,6 +519,9 @@ class ControlTests(unittest.TestCase):
                 self.assertIn("window.AudioContext || window.webkitAudioContext", javascript)
                 self.assertIn("playAlarmTone", javascript)
                 self.assertIn('NOREACTIVO:"NON RÉACTIF"', javascript)
+                self.assertIn('REACTIVO:"RÉACTIF"', javascript)
+                self.assertIn('OPERACIONAL:"OPÉRATIONNEL"', javascript)
+                self.assertIn('CIRCULANDO:"EN CIRCULATION"', javascript)
                 self.assertIn("renderElectrical", javascript)
                 request = urllib.request.Request(base + "/api/autopilot", data=b'{"enabled":true}',
                                                  headers={"Content-Type": "application/json"}, method="POST")
