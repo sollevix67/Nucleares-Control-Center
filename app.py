@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-APP_VERSION = "0.5.6"
+APP_VERSION = "0.6.0"
 BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 USER_ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 STATIC_DIR = BUNDLE_ROOT / "static"
@@ -477,6 +477,7 @@ class ControlCenter:
         self.poison_trends: dict[str, float] = {}
         self.filtered_grid_target_kw: float | None = None
         self.mscv_ordered: dict[int, float] = {}
+        self.bypass_ordered: dict[int, int] = {}
         self.train_pid = {i: PID(0.00002, 0.000002, 0.0, -0.3, 0.2) for i in range(3)}
         self.secondary_pid = {i: PID(0.0005, 0.00005, 0.001, -2.0, 2.0) for i in range(3)}
         self.threads: list[threading.Thread] = []
@@ -989,7 +990,27 @@ class ControlCenter:
             chemistry_requested and chemistry["installed"] and not chemistry["commands_exposed"],
         )
 
+    @staticmethod
+    def _normalize_command_value(variable: str, value: Any) -> Any:
+        """Send integers, except control-rod positions which support tenths."""
+        if isinstance(value, bool) or value is None:
+            return value
+        try:
+            number = float(value.replace(",", ".")) if isinstance(value, str) else float(value)
+        except (TypeError, ValueError):
+            return value
+        if not math.isfinite(number):
+            return value
+        rod_position = (
+            (variable.startswith("ROD_BANK_POS_") and variable.endswith("_ORDERED"))
+            or variable in {"RODS_ALL_POS_ORDERED", "RODS_POS_ORDERED"}
+        )
+        if rod_position:
+            return round(number, 1)
+        return int(math.floor(number + 0.5)) if number >= 0 else int(math.ceil(number - 0.5))
+
     def _write(self, area: str, variable: str, value: Any, reason: str, cooldown: float = 2.0) -> bool:
+        value = self._normalize_command_value(variable, value)
         now = time.monotonic()
         previous = self.last_write.get(variable)
         if previous and previous[0] == value and now - previous[1] < cooldown:
@@ -1136,7 +1157,7 @@ class ControlCenter:
         magnitude = abs(error)
         max_step = 0.1 if magnitude <= 3 else 0.4 if magnitude <= 8 else 0.8 if magnitude <= 15 else 1.2
         target = max(0.0, min(100.0, as_number(s.get(actual_name)) + max(-max_step, min(max_step, raw_delta))))
-        self._write("réacteur", ordered_name, round(target, 2), f"Régulation cœur {setpoint:.0f} °C")
+        self._write("réacteur", ordered_name, round(target, 1), f"Régulation cœur {setpoint:.0f} °C")
         for i in range(3):
             pump = f"COOLANT_CORE_CIRCULATION_PUMP_{i}_ORDERED_SPEED"
             if pump in self.writable and self._primary_pump_installed(s, i):
@@ -1202,15 +1223,31 @@ class ControlCenter:
             if delta > 0 and steam > 0:
                 new_mscv = min(new_mscv, max(steam / 8.0, 1.0))
             new_mscv = round(new_mscv, 2)
-            if self._write("production", f"MSCV_{i}_OPENING_ORDERED", new_mscv,
-                           f"Suivi réseau, cible {target_each / 1000:.1f} MW"):
-                self.mscv_ordered[i] = new_mscv
+            self.mscv_ordered[i] = new_mscv
+            self._write("production", f"MSCV_{i}_OPENING_ORDERED", new_mscv,
+                        f"Suivi réseau, cible {target_each / 1000:.1f} MW")
             bypass = f"STEAM_TURBINE_{i}_BYPASS_ORDERED"
             if bypass in self.writable:
-                self._write(
-                    "production", bypass, 0.0,
-                    "Bypass maintenu fermé — puissance régulée par MSCV", cooldown=30,
+                bypass_actual = as_number(s.get(f"STEAM_TURBINE_{i}_BYPASS_ACTUAL"))
+                excess_kw = max(0.0, power - target_each)
+                support_threshold_kw = max(2000.0, target_each * 0.05)
+                bypass_target = min(30, int(math.ceil(excess_kw / 1000.0))) if excess_kw > support_threshold_kw else 0
+                bypass_base = float(self.bypass_ordered.get(i, int(round(bypass_actual))))
+                bypass_base = max(bypass_actual - 10.0, min(bypass_actual + 10.0, bypass_base))
+                if bypass_target > bypass_base:
+                    bypass_command = min(float(bypass_target), bypass_base + 5.0)
+                elif bypass_target < bypass_base:
+                    bypass_command = max(float(bypass_target), bypass_base - 5.0)
+                else:
+                    bypass_command = bypass_base
+                bypass_command = int(round(max(0.0, min(30.0, bypass_command))))
+                bypass_command = int(round(max(bypass_actual - 10.0, min(bypass_actual + 10.0, bypass_command))))
+                self.bypass_ordered[i] = bypass_command
+                bypass_reason = (
+                    f"Appui bypass, surplus {excess_kw / 1000:.1f} MW"
+                    if bypass_command > 0 else "Bypass fermé — régulation MSCV suffisante"
                 )
+                self._write("production", bypass, bypass_command, bypass_reason)
             if secondary:
                 pump = f"COOLANT_SEC_CIRCULATION_PUMP_{i}_ORDERED_SPEED"
                 level = as_number(s.get(f"COOLANT_SEC_{i}_LIQUID_VOLUME"))
@@ -1401,6 +1438,7 @@ class ControlCenter:
                 self.dynamic_temp_setpoint = float(self.config["autopilot"]["target_core_temp"])
                 self.filtered_grid_target_kw = None
                 self.mscv_ordered.clear()
+                self.bypass_ordered.clear()
                 if self.config["autopilot"].get("target_boron_ppm") is None:
                     self.dynamic_boron_target = None
         if not enabled:

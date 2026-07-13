@@ -277,7 +277,8 @@ class ControlTests(unittest.TestCase):
                     state[f"STEAM_TURBINE_{index}_INSTALLED"] = False
                     state[f"STEAM_GEN_{index}_STATUS"] = 4
 
-                center._control_grid(state, 5.0, secondary=True)
+                for _ in range(3):
+                    center._control_grid(state, 5.0, secondary=True)
                 commands = dict(mock.plant.commands)
                 self.assertGreater(commands["MSCV_0_OPENING_ORDERED"], state["MSCV_0_OPENING_ACTUAL"])
                 self.assertEqual(commands["STEAM_TURBINE_0_BYPASS_ORDERED"], 0.0)
@@ -289,15 +290,18 @@ class ControlTests(unittest.TestCase):
                     mock.plant.commands.clear()
                 center.last_write.clear()
                 center.train_pid[0].reset()
+                center.mscv_ordered.clear()
+                center.bypass_ordered.clear()
                 state.update({
                     "POWER_DEMAND_MW": 40.0,
                     "GENERATOR_0_KW": 90000.0,
                     "MSCV_0_OPENING_ACTUAL": 12.0,
                 })
-                center._control_grid(state, 5.0, secondary=False)
+                for _ in range(2):
+                    center._control_grid(state, 5.0, secondary=False)
                 commands = dict(mock.plant.commands)
                 self.assertLess(commands["MSCV_0_OPENING_ORDERED"], state["MSCV_0_OPENING_ACTUAL"])
-                self.assertEqual(commands["STEAM_TURBINE_0_BYPASS_ORDERED"], 0.0)
+                self.assertEqual(commands["STEAM_TURBINE_0_BYPASS_ORDERED"], 10)
             finally:
                 app.DATA_DIR = old_data
 
@@ -326,11 +330,38 @@ class ControlTests(unittest.TestCase):
                     center._control_grid(state, 5.0, secondary=False)
 
                 orders = [
-                    float(value) for name, value in mock.plant.commands
+                    value for name, value in mock.plant.commands
                     if name == "MSCV_2_OPENING_ORDERED"
                 ]
-                self.assertEqual(orders, [22.7, 22.4, 22.1, 21.8, 21.5])
+                self.assertEqual(orders, [23, 22])
+                self.assertTrue(all(isinstance(value, int) for value in orders))
                 self.assertEqual(center.mscv_ordered[2], 21.5)
+                bypass_orders = [
+                    value for name, value in mock.plant.commands
+                    if name == "STEAM_TURBINE_2_BYPASS_ORDERED"
+                ]
+                self.assertEqual(bypass_orders, [5, 10])
+                self.assertTrue(all(isinstance(value, int) for value in bypass_orders))
+            finally:
+                app.DATA_DIR = old_data
+
+    def test_command_values_are_integer_except_control_rods(self):
+        with MockServer(chemistry_enabled=True) as mock, tempfile.TemporaryDirectory() as temp:
+            old_data = app.DATA_DIR; app.DATA_DIR = Path(temp)
+            try:
+                center = app.ControlCenter(self.config(mock.url))
+                center.readable, center.writable = center.client.discover()
+                with mock.plant.lock:
+                    mock.plant.commands.clear()
+                center._write("test", "MSCV_0_OPENING_ORDERED", 12.7, "test", cooldown=0)
+                center._write("test", "COOLANT_SEC_CIRCULATION_PUMP_0_ORDERED_SPEED", 47.55, "test", cooldown=0)
+                center._write("test", center.CHEM_DOSAGE_COMMAND, 2.4, "test", cooldown=0)
+                center._write("test", "ROD_BANK_POS_0_ORDERED", 77.56, "test", cooldown=0)
+                commands = dict(mock.plant.commands)
+                self.assertEqual(commands["MSCV_0_OPENING_ORDERED"], 13)
+                self.assertEqual(commands["COOLANT_SEC_CIRCULATION_PUMP_0_ORDERED_SPEED"], 48)
+                self.assertEqual(commands[center.CHEM_DOSAGE_COMMAND], 2)
+                self.assertEqual(commands["ROD_BANK_POS_0_ORDERED"], 77.6)
             finally:
                 app.DATA_DIR = old_data
 
@@ -557,6 +588,7 @@ class ControlTests(unittest.TestCase):
                 self.assertIn('OPERACIONAL:"OPÉRATIONNEL"', javascript)
                 self.assertIn('CIRCULANDO:"EN CIRCULATION"', javascript)
                 self.assertIn("renderElectrical", javascript)
+                self.assertIn("BYPASS ${fmt", javascript)
                 request = urllib.request.Request(base + "/api/autopilot", data=b'{"enabled":true}',
                                                  headers={"Content-Type": "application/json"}, method="POST")
                 response = json.load(urllib.request.urlopen(request))

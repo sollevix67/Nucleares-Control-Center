@@ -49,7 +49,7 @@ Pour simuler également un module chimique installé, lancer `python mock_game.p
 | Cœur | Température par position des barres, prise en compte de la criticité |
 | Sécurité | SCRAM automatique au seuil critique, pompes primaires à 90 % |
 | Production | Répartition de la demande réseau entre les groupes disponibles |
-| Turbines | Régulation progressive de la puissance par les MSCV et maintien du bypass fermé à 0 % |
+| Turbines | Régulation principale par les MSCV, avec appui progressif des bypass en cas de surplus important |
 | Secondaire | Débit des pompes selon la vapeur et le niveau des générateurs |
 | Condenseur | Remplissage entre 45 et 60 %, pompe à vide, circulation à 25 % |
 | Rétention | Vidange automatique entre 75 et 50 % |
@@ -60,7 +60,9 @@ Pour simuler également un module chimique installé, lancer `python mock_game.p
 
 Le pilote ne commande que les variables annoncées comme accessibles en écriture par la version courante du jeu. Pour les circuits indexés, cette vérification est complétée par `STEAM_TURBINE_*_INSTALLED` et par l’état du générateur de vapeur. Une tranche marquée `NOT_INSTALLED` ne reçoit aucune commande MSCV ou bypass. Les pompes primaires et secondaires sont filtrées séparément par leur propre état : l’absence d’une pompe ne désactive donc plus par erreur une turbine installée. Une commande absente est ignorée et inscrite dans le journal. Les opérations qui exigent encore une interaction physique du personnage dans le jeu ne peuvent pas être automatisées par le webserveur.
 
-En suivi réseau, les MSCV modulent la puissance vers la demande augmentée de la marge configurée, fixée à `0 MW` par défaut. Les bypass de turbine ne servent pas de régulateur continu : ils sont explicitement maintenus à `0 %` pour envoyer la vapeur disponible vers la turbine. La consigne MSCV est accumulée entre les cycles afin de franchir l’arrondi à l’entier de certaines versions du jeu, tout en restant limitée à cinq points de l’ouverture réelle.
+En suivi réseau, les MSCV modulent la puissance vers la demande augmentée de la marge configurée, fixée à `0 MW` par défaut. Lorsqu’un groupe dépasse sa cible d’au moins `2 MW`, son bypass vient en appui : il s’ouvre par pas de cinq points, jusqu’à `30 %`, puis se referme progressivement à l’approche de la cible. La consigne MSCV est accumulée entre les cycles afin de franchir l’arrondi à l’entier de certaines versions du jeu, tout en restant limitée à cinq points de l’ouverture réelle.
+
+Toutes les commandes numériques envoyées au jeu utilisent des nombres entiers : MSCV, bypass, vitesses de pompe, vannes et chimie. Seules les positions des barres de contrôle conservent une résolution au dixième.
 
 ### Réservoirs et générateurs dans Supervision
 

@@ -114,7 +114,7 @@ function trainCards(s, targetTotal) {
     const rpm = s[`STEAM_TURBINE_${i}_RPM`];
     return `<div class="train-card"><header><span>GROUPE ${i+1}</span><span>${rpm === undefined ? "VITESSE —" : `${fmt(rpm,0)} RPM`}</span></header>
       <strong>${fmt(kw/1000)} MW</strong><div class="bar"><i style="width:${pct}%;background:${pct > 110 ? 'var(--amber)' : 'var(--green)'}"></i></div>
-      <small><span>MSCV ${fmt(s[`MSCV_${i}_OPENING_ACTUAL`])}%</span><span>SEC ${fmt(s[`COOLANT_SEC_CIRCULATION_PUMP_${i}_ORDERED_SPEED`])}%</span></small></div>`;
+      <small><span>MSCV ${fmt(s[`MSCV_${i}_OPENING_ACTUAL`],0)}%</span><span>BYPASS ${fmt(s[`STEAM_TURBINE_${i}_BYPASS_ACTUAL`],0)}%</span><span>SEC ${fmt(s[`COOLANT_SEC_CIRCULATION_PUMP_${i}_ORDERED_SPEED`],0)}%</span></small></div>`;
   }).join("");
 }
 
