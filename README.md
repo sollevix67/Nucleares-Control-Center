@@ -76,6 +76,8 @@ Certaines versions du webserveur renvoient un code numérique à la place du tex
 
 Le bouton **Alarmes** est rouge lorsqu’au moins une alarme reste à acquitter, vert lorsque toutes les alarmes actives sont acquittées, et neutre en l’absence d’alarme. Les boutons individuels utilisent le même code couleur. La page Alarmes comporte également un bouton **Tout acquitter** ; l’acquittement ne supprime pas l’alarme, qui disparaît uniquement lorsque sa condition revient à la normale.
 
+Le son utilise un contexte audio persistant, activé au premier clic ou à la première touche du clavier afin de respecter la protection contre la lecture automatique des navigateurs. Une alarme apparue avant cette interaction est mémorisée et son signal est joué dès l’activation. Le bouton **Activer / tester le son** de la page Alarmes permet de vérifier immédiatement la sortie audio. Une alarme critique produit une séquence distincte d’une alarme d’avertissement.
+
 ### Transformateurs et bancs de résistances
 
 La zone **Production** affiche trois chemins électriques : transformateur de production, transformateur du réseau externe et transformateur de secours. Le webserveur ne publie pas directement l’état interne, la tension ni la température des transformateurs. L’application indique donc explicitement une **télémétrie indirecte** et déduit leur mise sous tension à partir de `POWER_FROM_TURBINE_KW`, `POWER_FROM_EXTERNAL_KW`, `EMERGENCY_GENERATOR_POWER_OUTPUT_KW` et `EMERGENCY_BATTERIES_POWER_OUTPUT_KW`.

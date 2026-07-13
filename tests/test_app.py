@@ -476,6 +476,7 @@ class ControlTests(unittest.TestCase):
                 self.assertIn('id="poison-chart"', html)
                 self.assertIn('id="xenon-power-ramp"', html)
                 self.assertIn('id="ack-all"', html)
+                self.assertIn('id="alarm-sound-test"', html)
                 self.assertIn('id="emergency-generator-2-installation"', html)
                 self.assertIn('id="transformer-list"', html)
                 self.assertIn('id="resistor-banks"', html)
@@ -487,6 +488,10 @@ class ControlTests(unittest.TestCase):
                 self.assertIn("renderPoisons", javascript)
                 self.assertIn("acknowledgeAll", javascript)
                 self.assertIn("alarm-needs-ack", javascript)
+                self.assertIn("unlockAlarmAudio", javascript)
+                self.assertIn("pendingAlarmSeverity", javascript)
+                self.assertIn("window.AudioContext || window.webkitAudioContext", javascript)
+                self.assertIn("playAlarmTone", javascript)
                 self.assertIn("renderElectrical", javascript)
                 request = urllib.request.Request(base + "/api/autopilot", data=b'{"enabled":true}',
                                                  headers={"Content-Type": "application/json"}, method="POST")

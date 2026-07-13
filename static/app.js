@@ -1,6 +1,9 @@
 const $ = (id) => document.getElementById(id);
 const fmt = (value, digits = 1) => value === null || value === undefined || Number.isNaN(Number(value)) ? "—" : Number(value).toFixed(digits);
-const state = { snapshot: null, history: {}, lastAlarmIds: new Set(), chartTimer: 0, supervisionZone: "synthesis" };
+const state = {
+  snapshot: null, history: {}, lastAlarmIds: new Set(), chartTimer: 0, supervisionZone: "synthesis",
+  audioContext: null, audioUnlocked: false, pendingAlarmSeverity: null
+};
 const GAME_TEXT_FR = {
   ACTIVE:"ACTIF",ACTIVO:"ACTIF",ACTIVA:"ACTIVE",INACTIVE:"INACTIF",INACTIVO:"INACTIF",INACTIVA:"INACTIVE",
   OPERATIVE:"OPÉRATIONNEL",OPERATIONAL:"OPÉRATIONNEL",OPERATIVO:"OPÉRATIONNEL",
@@ -199,8 +202,10 @@ function renderAlarms(alarms) {
   $("alarm-preview").innerHTML = alarms.length ? alarms.slice(0,4).map(a => `<div class="alarm-item ${a.severity}"><i></i><div><strong>${escapeHtml(a.title)}</strong><span>${escapeHtml(a.detail)}</span></div><time>${new Date(a.since).toLocaleTimeString()}</time></div>`).join("") : html;
   $("alarm-full").innerHTML = html;
   document.querySelectorAll("[data-ack]").forEach(b => b.addEventListener("click", () => acknowledge(b.dataset.ack)));
-  const activeIds = new Set(alarms.filter(a => !a.acknowledged).map(a => a.alarm_id));
-  if ([...activeIds].some(id => !state.lastAlarmIds.has(id))) beep();
+  const pendingAlarms = alarms.filter(a => !a.acknowledged);
+  const activeIds = new Set(pendingAlarms.map(a => a.alarm_id));
+  const newAlarms = pendingAlarms.filter(a => !state.lastAlarmIds.has(a.alarm_id));
+  if (newAlarms.length) beep(newAlarms.some(a => a.severity === "critical") ? "critical" : "warning");
   state.lastAlarmIds = activeIds;
 }
 
@@ -287,6 +292,7 @@ $("scram").addEventListener("click", async () => { if(!await confirmAction("Déc
 async function acknowledge(id){try{await api('/api/ack',{method:'POST',body:JSON.stringify({alarm_id:id})});refresh();}catch(err){showToast(err.message,true);}}
 async function acknowledgeAll(){try{const result=await api('/api/ack-all',{method:'POST',body:'{}'});showToast(`${result.acknowledged} alarme(s) acquittée(s)`);refresh();}catch(err){showToast(err.message,true);}}
 $("ack-all").addEventListener("click",acknowledgeAll);
+$("alarm-sound-test").addEventListener("click",()=>unlockAlarmAudio(true));
 
 let searchTimer; $("variable-search").addEventListener("input",()=>{clearTimeout(searchTimer);searchTimer=setTimeout(loadVariables,180)});
 async function loadVariables(){try{const data=await api(`/api/variables?q=${encodeURIComponent($("variable-search").value)}`);$("variable-rows").innerHTML=data.variables.map(v=>`<tr><td>${escapeHtml(v.name)}</td><td>${escapeHtml(String(v.value ?? '—'))}</td><td><span class="tag ${v.writable?'write':''}">${v.writable?'LECTURE / ÉCRITURE':'LECTURE'}</span></td></tr>`).join('');}catch(err){showToast(err.message,true);}}
@@ -294,7 +300,64 @@ async function loadVariables(){try{const data=await api(`/api/variables?q=${enco
 async function loadSettings(){try{const c=await api('/api/config');$("game-url").value=c.game_url;$("poll-seconds").value=c.poll_seconds;$("control-seconds").value=c.control_seconds;$("pool-capacity").value=c.reservoir_capacities_l.core_pool_tank;$("external-capacity").value=c.reservoir_capacities_l.external_coolant;$("emergency-generator-1-installation").value=c.equipment_overrides?.emergency_generators?.["1"]||"auto";$("emergency-generator-2-installation").value=c.equipment_overrides?.emergency_generators?.["2"]||"auto";$("target-temp").value=c.autopilot.target_core_temp;$("grid-buffer").value=c.autopilot.grid_buffer_mw;$("target-boron").value=c.autopilot.target_boron_ppm ?? '';$("boron-deadband").value=c.autopilot.boron_deadband_ppm;$("boron-max-output").value=c.autopilot.boron_max_output_pct;$("xenon-warning-ratio").value=c.thresholds.xenon_warning_ratio;$("xenon-critical-ratio").value=c.thresholds.xenon_critical_ratio;$("xenon-rise-guard").value=c.thresholds.xenon_rise_guard_pct_per_min;$("xenon-power-ramp").value=c.autopilot.xenon_power_ramp_mw_per_min;$("xenon-temp-ramp").value=c.autopilot.xenon_temp_ramp_c_per_cycle;$("area-toggles").innerHTML=Object.entries(AREA_LABELS).map(([key,label])=>`<label class="area-check"><input type="checkbox" data-area="${key}" ${c.autopilot.areas[key]?'checked':''}>${label}</label>`).join('');}catch(err){showToast(err.message,true);}}
 $("settings-form").addEventListener("submit",async e=>{e.preventDefault();const areas={};document.querySelectorAll('[data-area]').forEach(i=>areas[i.dataset.area]=i.checked);const targetBoron=$("target-boron").value.trim();const payload={game_url:$("game-url").value,poll_seconds:Number($("poll-seconds").value),control_seconds:Number($("control-seconds").value),reservoir_capacities_l:{core_pool_tank:Number($("pool-capacity").value),external_coolant:Number($("external-capacity").value)},equipment_overrides:{emergency_generators:{"1":$("emergency-generator-1-installation").value,"2":$("emergency-generator-2-installation").value}},thresholds:{xenon_warning_ratio:Number($("xenon-warning-ratio").value),xenon_critical_ratio:Number($("xenon-critical-ratio").value),xenon_rise_guard_pct_per_min:Number($("xenon-rise-guard").value)},autopilot:{target_core_temp:Number($("target-temp").value),grid_buffer_mw:Number($("grid-buffer").value),target_boron_ppm:targetBoron===''?null:Number(targetBoron),boron_deadband_ppm:Number($("boron-deadband").value),boron_max_output_pct:Number($("boron-max-output").value),xenon_power_ramp_mw_per_min:Number($("xenon-power-ramp").value),xenon_temp_ramp_c_per_cycle:Number($("xenon-temp-ramp").value),areas}};try{await api('/api/config',{method:'POST',body:JSON.stringify(payload)});$("save-status").textContent='Réglages enregistrés';showToast('Configuration enregistrée');setTimeout(()=>$("save-status").textContent='',2500);}catch(err){showToast(err.message,true);}});
 
-function beep(){try{const audio=new AudioContext();const osc=audio.createOscillator(),gain=audio.createGain();osc.frequency.value=660;gain.gain.setValueAtTime(.04,audio.currentTime);gain.gain.exponentialRampToValueAtTime(.001,audio.currentTime+.18);osc.connect(gain).connect(audio.destination);osc.start();osc.stop(audio.currentTime+.18);}catch(_) {}}
+function alarmSeverityMax(first, second) {
+  return first === "critical" || second === "critical" ? "critical" : (first || second || "warning");
+}
+
+function playAlarmTone(severity = "warning") {
+  const audio = state.audioContext;
+  if (!audio || audio.state !== "running") return false;
+  const critical = severity === "critical";
+  const frequencies = critical ? [880, 740, 880] : [660, 660];
+  frequencies.forEach((frequency, index) => {
+    const start = audio.currentTime + index * (critical ? .20 : .24);
+    const oscillator = audio.createOscillator(), gain = audio.createGain();
+    oscillator.type = "sine";
+    oscillator.frequency.setValueAtTime(frequency, start);
+    gain.gain.setValueAtTime(.0001, start);
+    gain.gain.exponentialRampToValueAtTime(critical ? .16 : .11, start + .015);
+    gain.gain.exponentialRampToValueAtTime(.0001, start + .17);
+    oscillator.connect(gain).connect(audio.destination);
+    oscillator.start(start); oscillator.stop(start + .18);
+  });
+  return true;
+}
+
+function beep(severity = "warning") {
+  if (state.audioUnlocked && playAlarmTone(severity)) return;
+  state.pendingAlarmSeverity = alarmSeverityMax(state.pendingAlarmSeverity, severity);
+}
+
+async function unlockAlarmAudio(playTest = false) {
+  const button = $("alarm-sound-test");
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) {
+    button.textContent = "SON NON PRIS EN CHARGE"; button.disabled = true;
+    if (playTest) showToast("Ce navigateur ne prend pas en charge le son d’alarme", true);
+    return false;
+  }
+  try {
+    if (!state.audioContext || state.audioContext.state === "closed") state.audioContext = new AudioContextClass();
+    if (state.audioContext.state !== "running") await state.audioContext.resume();
+    if (state.audioContext.state !== "running") throw new Error("Contexte audio suspendu");
+    const wasLocked = !state.audioUnlocked;
+    state.audioUnlocked = true;
+    button.textContent = "TESTER LE SON · ACTIF"; button.className = "secondary-button sound-active";
+    const pending = state.pendingAlarmSeverity;
+    state.pendingAlarmSeverity = null;
+    if (pending) playAlarmTone(pending);
+    else if (playTest) playAlarmTone("warning");
+    if (playTest && wasLocked) showToast("Son des alarmes activé");
+    return true;
+  } catch (_) {
+    state.audioUnlocked = false;
+    button.textContent = "ACTIVER LE SON"; button.className = "secondary-button sound-blocked";
+    if (playTest) showToast("Le navigateur bloque encore le son. Vérifiez l’onglet et le volume système.", true);
+    return false;
+  }
+}
 function escapeHtml(value){return String(value).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
 
+document.addEventListener("pointerdown",()=>unlockAlarmAudio(false),{passive:true});
+document.addEventListener("keydown",()=>unlockAlarmAudio(false));
 switchSupervisionZone("synthesis"); loadSettings(); refresh(); refreshHistory(); setInterval(refresh,1000); setInterval(refreshHistory,10000); window.addEventListener('resize',()=>{drawChart();drawPoisonChart();});
