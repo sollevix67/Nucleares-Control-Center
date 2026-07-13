@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-APP_VERSION = "0.5.3"
+APP_VERSION = "0.5.4"
 BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 USER_ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 STATIC_DIR = BUNDLE_ROOT / "static"
@@ -165,6 +165,9 @@ def game_text_fr(value: Any) -> str:
     translations = {
         "ACTIVE": "ACTIF", "ACTIVO": "ACTIF", "ACTIVA": "ACTIVE", "ACTIVADO": "ACTIF", "ACTIVADA": "ACTIVE",
         "INACTIVE": "INACTIF", "INACTIVO": "INACTIF", "INACTIVA": "INACTIVE", "DESACTIVADO": "INACTIF", "DESACTIVADA": "INACTIVE",
+        "NON REACTIVE": "NON RÉACTIF", "NONREACTIVE": "NON RÉACTIF",
+        "NO REACTIVO": "NON RÉACTIF", "NOREACTIVO": "NON RÉACTIF",
+        "NO REACTIVA": "NON RÉACTIVE", "NOREACTIVA": "NON RÉACTIVE",
         "RUNNING": "EN MARCHE", "FUNCIONANDO": "EN MARCHE", "EN FUNCIONAMIENTO": "EN MARCHE", "ENCENDIDO": "EN MARCHE", "ENCENDIDA": "EN MARCHE",
         "STARTED": "DÉMARRÉ", "ARRANCADO": "DÉMARRÉ", "ARRANCADA": "DÉMARRÉE", "STARTING": "DÉMARRAGE", "ARRANCANDO": "DÉMARRAGE", "ENCENDIENDO": "DÉMARRAGE",
         "STOPPED": "ARRÊTÉ", "DETENIDO": "ARRÊTÉ", "DETENIDA": "ARRÊTÉE", "PARADO": "ARRÊTÉ", "PARADA": "ARRÊTÉE", "APAGADO": "ARRÊTÉ", "APAGADA": "ARRÊTÉE", "APAGANDO": "ARRÊT",

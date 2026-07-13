@@ -156,6 +156,19 @@ class ControlTests(unittest.TestCase):
         self.assertEqual(app.game_text_fr("Sin combustible"), "SANS CARBURANT")
         self.assertEqual(app.game_text_fr("Despresurizado"), "DÉPRESSURISÉ")
         self.assertEqual(app.game_text_fr("Requiere mantenimiento"), "MAINTENANCE REQUISE")
+        self.assertEqual(app.game_text_fr("NOREACTIVO"), "NON RÉACTIF")
+        self.assertEqual(app.game_text_fr("No reactivo"), "NON RÉACTIF")
+        self.assertEqual(app.game_text_fr("NO_REACTIVO"), "NON RÉACTIF")
+
+    def test_nonreactive_core_state_is_translated(self):
+        with MockServer() as mock, tempfile.TemporaryDirectory() as temp:
+            old_data = app.DATA_DIR; app.DATA_DIR = Path(temp)
+            try:
+                center = app.ControlCenter(self.config(mock.url))
+                state = dict(mock.plant.values); state["CORE_STATE"] = "NOREACTIVO"
+                self.assertEqual(center._derive(state)["core_state"], "NON RÉACTIF")
+            finally:
+                app.DATA_DIR = old_data
 
     def test_emergency_generator_manual_override_has_priority(self):
         with MockServer() as mock, tempfile.TemporaryDirectory() as temp:
@@ -492,6 +505,7 @@ class ControlTests(unittest.TestCase):
                 self.assertIn("pendingAlarmSeverity", javascript)
                 self.assertIn("window.AudioContext || window.webkitAudioContext", javascript)
                 self.assertIn("playAlarmTone", javascript)
+                self.assertIn('NOREACTIVO:"NON RÉACTIF"', javascript)
                 self.assertIn("renderElectrical", javascript)
                 request = urllib.request.Request(base + "/api/autopilot", data=b'{"enabled":true}',
                                                  headers={"Content-Type": "application/json"}, method="POST")
