@@ -8,6 +8,7 @@ This controls the Nucleares *game* through its local webserver.
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import math
 import os
@@ -31,7 +32,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-APP_VERSION = "0.4.1"
+APP_VERSION = "0.4.2"
 BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 USER_ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 STATIC_DIR = BUNDLE_ROOT / "static"
@@ -48,6 +49,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "reservoir_capacities_l": {
         "core_pool_tank": 100000.0,
         "external_coolant": 200000.0,
+    },
+    "equipment_overrides": {
+        "emergency_generators": {
+            "1": "auto",
+            "2": "not_installed",
+        },
     },
     "autopilot": {
         "auto_start": False,
@@ -92,12 +99,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
 
 def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
-    result = dict(base)
+    result = copy.deepcopy(base)
     for key, value in override.items():
         if isinstance(value, dict) and isinstance(result.get(key), dict):
             result[key] = deep_merge(result[key], value)
         else:
-            result[key] = value
+            result[key] = copy.deepcopy(value)
     return result
 
 
@@ -572,6 +579,15 @@ class ControlCenter:
         return status_name not in s or not self._status_not_installed(s.get(status_name))
 
     def _emergency_generator_installed(self, s: dict[str, Any], index: int) -> bool:
+        override = str(
+            self.config.get("equipment_overrides", {})
+            .get("emergency_generators", {})
+            .get(str(index), "auto")
+        )
+        if override == "installed":
+            return True
+        if override == "not_installed":
+            return False
         status = s.get(f"EMERGENCY_GENERATOR_{index}_STATUS")
         textual_metadata = (
             status,
@@ -783,6 +799,11 @@ class ControlCenter:
             status_raw = s.get(f"EMERGENCY_GENERATOR_{index}_STATUS")
             mode_raw = s.get(f"EMERGENCY_GENERATOR_{index}_MODE")
             installed = self._emergency_generator_installed(s, index)
+            installation_override = str(
+                self.config.get("equipment_overrides", {})
+                .get("emergency_generators", {})
+                .get(str(index), "auto")
+            )
             maintenance = installed and bool(s.get(f"EMERGENCY_GENERATOR_{index}_MAINTENANCE_NEEDED", False))
             status_text = game_text_fr(status_raw) if installed else "NON INSTALLÉ"
             normalized = status_text.casefold()
@@ -797,6 +818,7 @@ class ControlCenter:
             emergency_generators.append({
                 "id": index, "installed": installed,
                 "installation_status": "INSTALLÉ" if installed else "NON INSTALLÉ",
+                "installation_source": "DÉTECTION AUTO" if installation_override == "auto" else "RÉGLAGE MANUEL",
                 "status": status_text, "status_class": status_class,
                 "mode": game_text_fr(mode_raw) if installed else None,
                 "fuel": optional_number(f"EMERGENCY_GENERATOR_{index}_FUEL") if installed else None,
@@ -1257,6 +1279,16 @@ class ControlCenter:
             alarm.acknowledged = True
             return True
 
+    def acknowledge_all(self) -> int:
+        with self.lock:
+            pending = [alarm for alarm in self.alarms.values() if not alarm.acknowledged]
+            for alarm in pending:
+                alarm.acknowledged = True
+            count = len(pending)
+        if count:
+            self.store.record_event("acquittement", f"{count} alarme(s) acquittée(s) globalement")
+        return count
+
     def set_autopilot(self, enabled: bool) -> None:
         state: dict[str, Any] = {}
         with self.lock:
@@ -1278,7 +1310,7 @@ class ControlCenter:
 
     def update_config(self, updates: dict[str, Any]) -> None:
         allowed_top = {
-            "game_url", "poll_seconds", "control_seconds", "reservoir_capacities_l",
+            "game_url", "poll_seconds", "control_seconds", "reservoir_capacities_l", "equipment_overrides",
             "autopilot", "thresholds",
         }
         sanitized = {key: value for key, value in updates.items() if key in allowed_top}
@@ -1296,6 +1328,10 @@ class ControlCenter:
             for name, capacity in candidate["reservoir_capacities_l"].items():
                 if not 1 <= float(capacity) <= 10000000:
                     raise ValueError(f"Capacité de réservoir invalide: {name}")
+            emergency_overrides = candidate.get("equipment_overrides", {}).get("emergency_generators", {})
+            for index in ("1", "2"):
+                if emergency_overrides.get(index, "auto") not in {"auto", "installed", "not_installed"}:
+                    raise ValueError(f"Réglage d’installation invalide pour le groupe de secours {index}")
             if not 250 <= float(candidate["autopilot"]["target_core_temp"]) <= 390:
                 raise ValueError("La température cible doit être comprise entre 250 et 390 °C")
             target_boron = candidate["autopilot"].get("target_boron_ppm")
@@ -1417,6 +1453,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._json({"ok": True})
             elif parsed.path == "/api/ack":
                 self._json({"ok": self.center.acknowledge(str(body.get("alarm_id", "")))})
+            elif parsed.path == "/api/ack-all":
+                self._json({"ok": True, "acknowledged": self.center.acknowledge_all()})
             elif parsed.path == "/api/config":
                 self.center.update_config(body)
                 self._json({"ok": True, "config": self.center.config})

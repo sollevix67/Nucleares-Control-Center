@@ -9,6 +9,12 @@
     "core_pool_tank": 100000.0,
     "external_coolant": 200000.0
   },
+  "equipment_overrides": {
+    "emergency_generators": {
+      "1": "auto",
+      "2": "not_installed"
+    }
+  },
   "autopilot": {
     "auto_start": false,
     "target_core_temp": 330.0,

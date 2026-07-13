@@ -106,7 +106,9 @@ class ControlTests(unittest.TestCase):
                 self.assertEqual(emergency[0]["fuel"], 486.0)
                 self.assertEqual(emergency[0]["fuel_unit"], "L")
                 self.assertEqual(emergency[0]["pressurizer"], "PRESSURISÉ")
-                self.assertEqual(emergency[1]["status"], "EN ATTENTE")
+                self.assertFalse(emergency[1]["installed"])
+                self.assertEqual(emergency[1]["status"], "NON INSTALLÉ")
+                self.assertEqual(emergency[1]["installation_source"], "RÉGLAGE MANUEL")
                 self.assertEqual(center.derived["chemical_reservoirs"], [])
             finally:
                 app.DATA_DIR = old_data
@@ -142,6 +144,22 @@ class ControlTests(unittest.TestCase):
         self.assertEqual(app.game_text_fr("Sin combustible"), "SANS CARBURANT")
         self.assertEqual(app.game_text_fr("Despresurizado"), "DÉPRESSURISÉ")
         self.assertEqual(app.game_text_fr("Requiere mantenimiento"), "MAINTENANCE REQUISE")
+
+    def test_emergency_generator_manual_override_has_priority(self):
+        with MockServer() as mock, tempfile.TemporaryDirectory() as temp:
+            old_data = app.DATA_DIR; app.DATA_DIR = Path(temp)
+            try:
+                config = self.config(mock.url)
+                center = app.ControlCenter(config)
+                state = dict(mock.plant.values)
+                automatic = center._derive(state)["generators"]["emergency"][1]
+                self.assertFalse(automatic["installed"])
+                config["equipment_overrides"]["emergency_generators"]["2"] = "installed"
+                forced = center._derive(state)["generators"]["emergency"][1]
+                self.assertTrue(forced["installed"])
+                self.assertEqual(forced["installation_source"], "RÉGLAGE MANUEL")
+            finally:
+                app.DATA_DIR = old_data
 
     def test_autopilot_writes_controls(self):
         with MockServer() as mock, tempfile.TemporaryDirectory() as temp:
@@ -403,6 +421,20 @@ class ControlTests(unittest.TestCase):
             finally:
                 app.DATA_DIR = old_data
 
+    def test_global_alarm_acknowledgement(self):
+        with MockServer() as mock, tempfile.TemporaryDirectory() as temp:
+            old_data = app.DATA_DIR; app.DATA_DIR = Path(temp)
+            try:
+                center = app.ControlCenter(self.config(mock.url))
+                center._set_alarm("one", "warning", "Alarme 1", "test", True)
+                center._set_alarm("two", "critical", "Alarme 2", "test", True)
+                self.assertTrue(center.acknowledge("one"))
+                self.assertEqual(center.acknowledge_all(), 1)
+                self.assertTrue(all(alarm.acknowledged for alarm in center.alarms.values()))
+                self.assertEqual(center.acknowledge_all(), 0)
+            finally:
+                app.DATA_DIR = old_data
+
     def test_dashboard_api_end_to_end(self):
         with MockServer() as mock, tempfile.TemporaryDirectory() as temp:
             old_data = app.DATA_DIR; app.DATA_DIR = Path(temp)
@@ -427,21 +459,31 @@ class ControlTests(unittest.TestCase):
                 self.assertIn('data-supervision-zone="chemistry"', html)
                 self.assertIn('id="poison-chart"', html)
                 self.assertIn('id="xenon-power-ramp"', html)
+                self.assertIn('id="ack-all"', html)
+                self.assertIn('id="emergency-generator-2-installation"', html)
                 javascript = urllib.request.urlopen(base + "/app.js").read().decode("utf-8")
                 self.assertIn("d.vacuum_pct", javascript)
                 self.assertIn('generator.fuel_unit || "L"', javascript)
                 self.assertIn("generator.installation_status", javascript)
                 self.assertIn("switchSupervisionZone", javascript)
                 self.assertIn("renderPoisons", javascript)
+                self.assertIn("acknowledgeAll", javascript)
+                self.assertIn("alarm-needs-ack", javascript)
                 request = urllib.request.Request(base + "/api/autopilot", data=b'{"enabled":true}',
                                                  headers={"Content-Type": "application/json"}, method="POST")
                 response = json.load(urllib.request.urlopen(request))
                 self.assertTrue(response["enabled"])
+                center._set_alarm("global_test", "warning", "Test global", "test", True)
+                request = urllib.request.Request(base + "/api/ack-all", data=b'{}',
+                                                 headers={"Content-Type": "application/json"}, method="POST")
+                response = json.load(urllib.request.urlopen(request))
+                self.assertEqual(response["acknowledged"], 1)
                 snapshot = json.load(urllib.request.urlopen(base + "/api/state"))
                 self.assertEqual(snapshot["capabilities"]["readable"], len(center.readable))
                 self.assertGreater(snapshot["capabilities"]["writable"], 10)
                 self.assertGreaterEqual(len(snapshot["derived"]["reservoirs"]), 5)
                 self.assertEqual(len(snapshot["derived"]["generators"]["main"]), 3)
+                self.assertTrue(next(a for a in snapshot["alarms"] if a["alarm_id"] == "global_test")["acknowledged"])
                 history = json.load(urllib.request.urlopen(base + "/api/history?variables=CORE_TEMP&seconds=60"))
                 self.assertIn("CORE_TEMP", history)
             finally:

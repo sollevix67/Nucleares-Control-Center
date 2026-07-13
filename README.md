@@ -68,9 +68,13 @@ La page **Supervision** est organisée en six sous-onglets : **Synthèse**, **R�
 
 La page **Supervision** affiche les niveaux disponibles du condenseur, du circuit primaire, du pressuriseur, du réservoir de refroidissement primaire, de la piscine du cœur, du réservoir externe et de la rétention. Les valeurs sont présentées en pourcentage lorsque la capacité est connue, sinon en litres. Le webserveur ne publiant pas la capacité maximale de la piscine et du réservoir externe, leurs jauges utilisent des références configurables de 100 000 L et 200 000 L. Ces échelles peuvent être modifiées dans **Réglages**.
 
-Les trois générateurs principaux indiquent leur état de couplage, leur disjoncteur, leur puissance, leur vitesse et leur fréquence. Les deux groupes électrogènes de secours sont toujours affichés avec un état explicite **INSTALLÉ** ou **NON INSTALLÉ**. Lorsqu’un groupe est installé, son état de marche, son mode, son carburant en litres, son pressuriseur et ses besoins de maintenance sont également indiqués. Les principaux états anglais ou espagnols renvoyés par le jeu sont traduits en français.
+Les trois générateurs principaux indiquent leur état de couplage, leur disjoncteur, leur puissance, leur vitesse et leur fréquence. Les deux groupes électrogènes de secours sont toujours affichés avec un état explicite **INSTALLÉ** ou **NON INSTALLÉ**. Lorsqu’un groupe est installé, son état de marche, son mode, son carburant en litres, son pressuriseur et ses besoins de maintenance sont également indiqués. Les principaux états anglais ou espagnols renvoyés par le jeu sont traduits en français. Le groupe de secours 2 est considéré non installé par défaut ; son état peut être forcé sur **Auto**, **Installé** ou **Non installé** dans Réglages si sa configuration change dans la partie.
 
 Certaines versions du webserveur renvoient un code numérique à la place du texte pour les états lors d’une lecture groupée. L’application relit individuellement ces champs avant de déterminer l’installation des groupes. Une variable présente avec des valeurs de remplacement à zéro n’est donc plus considérée, à elle seule, comme une preuve que l’équipement est installé.
+
+### Acquittement des alarmes
+
+Le bouton **Alarmes** est rouge lorsqu’au moins une alarme reste à acquitter, vert lorsque toutes les alarmes actives sont acquittées, et neutre en l’absence d’alarme. Les boutons individuels utilisent le même code couleur. La page Alarmes comporte également un bouton **Tout acquitter** ; l’acquittement ne supprime pas l’alarme, qui disparaît uniquement lorsque sa condition revient à la normale.
 
 Les pourcentages du jeu sont normalisés automatiquement : une valeur de vide condenseur comprise entre `0` et `1` est interprétée comme une fraction (`1,0 = 100 %`), tandis qu’une valeur déjà comprise sur l’échelle `0–100` est conservée.
 
