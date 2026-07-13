@@ -103,9 +103,9 @@ function render(snapshot) {
   const hydraulicText = { condenser: 'condenser-fill', vacuum: 'vacuum', primary: 'primary-level', pressurizer: 'pressurizer', retention: 'retention' };
   Object.entries(hydraulic).forEach(([key,value]) => { $(hydraulicText[key]).textContent = `${fmt(value)} %`; setBar(`${key}-bar`, value, key === 'retention' ? 'high' : 'low'); });
   const chemistry = snapshot.chemistry || {status:'unavailable',message:'Module chimique indisponible'};
-  const chemistryLabels = {ready:'PRÊT',fault:'DÉFAUT',waiting_truck:'CAMION REQUIS',read_only:'LECTURE SEULE',not_installed:'NON INSTALLÉ',unavailable:'INDISPONIBLE'};
+  const chemistryLabels = {ready:'PRÊT',fault:'DÉFAUT',read_only:'LECTURE SEULE',not_installed:'NON INSTALLÉ',unavailable:'INDISPONIBLE'};
   $("chemistry-status").textContent = chemistryLabels[chemistry.status] || chemistry.status;
-  $("chemistry-status").className = `status-pill ${chemistry.status === 'ready' ? 'ok' : chemistry.status === 'fault' ? 'danger' : chemistry.status === 'waiting_truck' || chemistry.status === 'read_only' ? 'warn' : ''}`;
+  $("chemistry-status").className = `status-pill ${chemistry.status === 'ready' ? 'ok' : chemistry.status === 'fault' ? 'danger' : chemistry.status === 'read_only' ? 'warn' : ''}`;
   $("chemistry-detail").textContent = chemistry.message || 'État inconnu';
   $("boron-ppm").textContent = `${fmt(chemistry.ppm)} ppm`;
   renderAlarms(snapshot.alarms || []); renderJournal(snapshot.actions || []);

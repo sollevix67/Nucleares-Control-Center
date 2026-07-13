@@ -59,7 +59,9 @@ Le pilote ne commande que les variables annoncées comme accessibles en écritur
 
 ### Module chimique optionnel
 
-Une partie peut être lancée sans le module chimique. L’application distingue automatiquement les cas suivants : variables absentes, pompes non installées, camion absent ou déconnecté, lecture seule, défaut et module prêt. Un module absent ne produit aucune alarme et ne bloque aucune autre zone du pilote.
+Une partie peut être lancée sans le module chimique. L’application distingue automatiquement les variables absentes, les pompes non installées, la lecture seule, les défauts et le module prêt. Un module absent ne produit aucune alarme et ne bloque aucune autre zone du pilote.
+
+Le camion chimique n’est pas requis pour utiliser l’acide déjà présent dans le réservoir local. Ses variables sont affichées à titre informatif, mais elles ne bloquent ni le dosage ni la filtration. Le niveau du réservoir d’acide n’étant pas exposé par la liste actuelle du webserveur, il reste à surveiller dans le jeu.
 
 Lorsque le module est prêt, le pilote utilise exclusivement les commandes POST `CHEM_BORON_DOSAGE_ORDERED_RATE` et `CHEM_BORON_FILTER_ORDERED_SPEED`, limitées à la plage `0–100 %`. Le dosage et la filtration sont mutuellement exclusifs. Une pompe à sec, en surcharge, à maintenir ou privée d’énergie provoque l’arrêt des commandes chimiques.
 

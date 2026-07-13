@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.2.1"
 BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 USER_ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 STATIC_DIR = BUNDLE_ROOT / "static"
@@ -513,10 +513,7 @@ class ControlCenter:
                 self._set_alarm("overload_" + name, "warning", "Pompe en surcharge", name, as_number(value) == 1)
 
         chemistry_requested = self.autopilot_enabled and bool(self.config["autopilot"]["areas"].get("chemistry"))
-        self._set_alarm(
-            "chemistry_connection", "warning", "Module chimique indisponible",
-            chemistry["message"], chemistry_requested and chemistry["installed"] and not chemistry["connected"],
-        )
+        self._set_alarm("chemistry_connection", "warning", "Module chimique indisponible", "", False)
         self._set_alarm(
             "chemistry_fault", "critical", "Défaut du module chimique",
             chemistry.get("fault_detail", ""), chemistry["installed"] and chemistry["fault"],
@@ -577,7 +574,6 @@ class ControlCenter:
         installed = signals_present and ppm is not None and not both_not_installed
         in_zone = bool(s.get("CHEM_TRUCK_IN_ZONE", False))
         truck_connected = bool(s.get("CHEM_TRUCK_CONNECTED", False))
-        connected = in_zone and truck_connected
 
         faults: list[str] = []
         for label, status in (("dosage", dosing_status), ("filtration", filter_status)):
@@ -599,19 +595,22 @@ class ControlCenter:
             status, message = "not_installed", "Module chimique non installé dans cette partie"
         elif faults:
             status, message = "fault", "; ".join(faults)
-        elif not connected:
-            status, message = "waiting_truck", "Camion chimique absent ou déconnecté"
         elif not commands_exposed:
             status, message = "read_only", "Mesures disponibles, commandes POST absentes"
         else:
-            status, message = "ready", "Dosage et filtration disponibles"
+            status = "ready"
+            message = "Dosage et filtration disponibles"
+            if not truck_connected:
+                message += " — réservoir local, camion non requis"
 
         return {
             "status": status,
             "message": message,
             "available": signals_present or commands_exposed,
             "installed": installed,
-            "connected": connected,
+            "connected": truck_connected,
+            "truck_in_zone": in_zone,
+            "truck_connected": truck_connected,
             "ready": status == "ready",
             "commands_exposed": commands_exposed,
             "fault": bool(faults),

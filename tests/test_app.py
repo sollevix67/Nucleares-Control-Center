@@ -130,6 +130,28 @@ class ControlTests(unittest.TestCase):
             finally:
                 app.DATA_DIR = old_data
 
+    def test_chemistry_uses_local_tank_without_truck(self):
+        with MockServer(chemistry_enabled=True) as mock, tempfile.TemporaryDirectory() as temp:
+            old_data = app.DATA_DIR; app.DATA_DIR = Path(temp)
+            try:
+                config = self.config(mock.url); config["autopilot"]["target_boron_ppm"] = 1000.0
+                center = app.ControlCenter(config)
+                center.readable, center.writable = center.client.discover()
+                with mock.plant.lock:
+                    mock.plant.values["CHEM_TRUCK_IN_ZONE"] = False
+                    mock.plant.values["CHEM_TRUCK_CONNECTED"] = False
+                    mock.plant.values["CHEM_BORON_PPM"] = 950.0
+                state = center.client.batch_get(center.readable)
+                center.autopilot_enabled = True
+                center._evaluate_alarms(state)
+                center._control_chemistry(state)
+                self.assertEqual(center._chemistry_info(state)["status"], "ready")
+                self.assertNotIn("chemistry_connection", center.alarms)
+                commands = dict(mock.plant.commands)
+                self.assertGreater(commands["CHEM_BORON_DOSAGE_ORDERED_RATE"], 0)
+            finally:
+                app.DATA_DIR = old_data
+
     def test_chemistry_not_installed_is_silent(self):
         with MockServer() as mock, tempfile.TemporaryDirectory() as temp:
             old_data = app.DATA_DIR; app.DATA_DIR = Path(temp)
