@@ -53,7 +53,7 @@ Pour simuler également un module chimique installé, lancer `python mock_game.p
 | Secondaire | Débit des pompes selon la vapeur et le niveau des générateurs |
 | Condenseur | Remplissage entre 45 et 60 %, pompe à vide, circulation à 25 % |
 | Rétention | Maintien autour de 50 % : remplissage naturel vanne fermée, vidange progressive entre 55 et 50 % |
-| Pressuriseur | Commande de la vanne motorisée entre 50 et 60 % |
+| Pressuriseur | Refroidissement au-dessus de la température opérative + 5 °C, fermeture au retour à la normale |
 | Primaire | Appoint d’eau entre 80 et 90 % |
 | Chimie | Détection optionnelle du module, maintien du bore par dosage/filtration, sécurités des pompes |
 | Poisons neutroniques | Suivi xénon/iode, alarme relative et ralentissement des rampes de puissance |

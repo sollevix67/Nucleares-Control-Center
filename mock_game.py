@@ -20,7 +20,8 @@ READABLE = [
     "CONDENSER_VOLUME", "CONDENSER_VAPOR_VOLUME", "CONDENSER_VACUUM",
     "CONDENSER_VACUUM_PUMP_ACTIVE", "CONDENSER_CIRCULATION_PUMP_ACTIVE",
     "FREIGHT_PUMP_CONDENSER_ACTIVE", "COOLANT_CORE_PRIMARY_LOOP_LEVEL",
-    "PRESSURIZER_FILL_LEVEL", "CORE_PRIMARY_CIRCUIT_COOLING_TANK_VOLUME",
+    "PRESSURIZER_FILL_LEVEL", "PRESSURIZER_TEMPERATURE", "PRESSURIZER_TEMPERATURE_OPERATIVE",
+    "CORE_PRIMARY_CIRCUIT_COOLING_TANK_VOLUME",
     "CORE_POOL_COOLANT_TANK_VOLUME", "CORE_EXTERNAL_COOLANT_RESERVOIR_VOLUME",
     "FREIGHT_PUMP_FEEDWATER_ACTIVE", "VACUUM_RETENTION_TANK_VOLUME",
     "STEAM_EJECTOR_CONDENSER_RETURN_VALVE_ACTUAL", "STEAM_EJECTOR_CONDENSER_RETURN_VALVE_ORDERED",
@@ -96,7 +97,9 @@ class Plant:
             "CONDENSER_VOLUME": 55000.0, "CONDENSER_VAPOR_VOLUME": 45000.0, "CONDENSER_VACUUM": 1.0,
             "CONDENSER_VACUUM_PUMP_ACTIVE": True, "CONDENSER_CIRCULATION_PUMP_ACTIVE": True,
             "FREIGHT_PUMP_CONDENSER_ACTIVE": False, "COOLANT_CORE_PRIMARY_LOOP_LEVEL": 88.0,
-            "PRESSURIZER_FILL_LEVEL": 60.0, "CORE_PRIMARY_CIRCUIT_COOLING_TANK_VOLUME": 106030.0,
+            "PRESSURIZER_FILL_LEVEL": 60.0, "PRESSURIZER_TEMPERATURE": 350.0,
+            "PRESSURIZER_TEMPERATURE_OPERATIVE": 350.0,
+            "CORE_PRIMARY_CIRCUIT_COOLING_TANK_VOLUME": 106030.0,
             "CORE_POOL_COOLANT_TANK_VOLUME": 80000.0, "CORE_EXTERNAL_COOLANT_RESERVOIR_VOLUME": 150000.0,
             "FREIGHT_PUMP_FEEDWATER_ACTIVE": False, "VACUUM_RETENTION_TANK_VOLUME": 22000.0,
             "STEAM_EJECTOR_CONDENSER_RETURN_VALVE_ACTUAL": 0.0,
@@ -115,6 +118,10 @@ class Plant:
             "EMERGENCY_GENERATOR_2_MODE": "AUTOMÁTICO", "EMERGENCY_GENERATOR_2_STATUS": "EN ESPERA",
             "EMERGENCY_GENERATOR_2_PRESSURIZER": "NO PRESURIZADO", "EMERGENCY_GENERATOR_2_FUEL": 420.0,
             "EMERGENCY_GENERATOR_2_MAINTENANCE_NEEDED": False,
+        }
+        self.pressurizer_valve = {
+            "Name": "Valvula_Pressurizer_Spray", "Value": 0,
+            "IsOpened": False, "IsClosed": True, "Actuator": "OFF",
         }
         if chemistry_enabled:
             self.readable.extend(CHEM_READABLE)
@@ -173,6 +180,13 @@ class Plant:
                 self.values["STEAM_EJECTOR_CONDENSER_RETURN_VALVE_ACTUAL"] = float(value)
             elif variable == "FREIGHT_PUMP_FEEDWATER_SWITCH":
                 self.values["FREIGHT_PUMP_FEEDWATER_ACTIVE"] = bool(value)
+            elif variable in {"VALVE_OPEN", "VALVE_CLOSE", "VALVE_OFF"} and value == "Valvula_Pressurizer_Spray":
+                if variable == "VALVE_OPEN":
+                    self.pressurizer_valve.update({"Value": 100, "IsOpened": True, "IsClosed": False, "Actuator": "OPEN"})
+                elif variable == "VALVE_CLOSE":
+                    self.pressurizer_valve.update({"Value": 0, "IsOpened": False, "IsClosed": True, "Actuator": "CLOSE"})
+                else:
+                    self.pressurizer_valve["Actuator"] = "OFF"
             elif variable == "CHEM_BORON_DOSAGE_ORDERED_RATE":
                 rate = max(0.0, min(100.0, float(value)))
                 self.values["CHEM_BORON_DOSAGE_ORDERED"] = rate
@@ -263,7 +277,9 @@ class MockHandler(BaseHTTPRequestHandler):
                 }
             self._send(json.dumps({"values": values, "errors": {}}), "application/json")
         elif variable == "VALVE_PANEL_JSON":
-            self._send(json.dumps({"valves": [{"Name": "Valvula_Pressurizer_Spray", "Value": 0, "IsOpened": False, "IsClosed": True, "Actuator": "OFF"}]}), "application/json")
+            with self.plant.lock:
+                valve = dict(self.plant.pressurizer_valve)
+            self._send(json.dumps({"valves": [valve]}), "application/json")
         elif variable in self.plant.values:
             self._send(str(self.plant.values[variable]), "text/plain")
         else:

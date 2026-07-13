@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-APP_VERSION = "0.6.1"
+APP_VERSION = "0.6.2"
 BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 USER_ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 STATIC_DIR = BUNDLE_ROOT / "static"
@@ -444,6 +444,8 @@ class ControlCenter:
     RETENTION_MAX = 40000.0
     RETENTION_TARGET_PCT = 50.0
     RETENTION_DRAIN_START_PCT = 55.0
+    PRESSURIZER_SPRAY_OPEN_MARGIN_C = 5.0
+    PRESSURIZER_SPRAY_CLOSE_MARGIN_C = 1.0
     CHEM_DOSAGE_COMMAND = "CHEM_BORON_DOSAGE_ORDERED_RATE"
     CHEM_FILTER_COMMAND = "CHEM_BORON_FILTER_ORDERED_SPEED"
     POISON_ISOTOPES = ("IODINE", "XENON")
@@ -1318,12 +1320,40 @@ class ControlCenter:
             self._write("rétention", pump_command, True, "Maintien du vide et remplissage naturel")
 
     def _control_pressurizer(self, s: dict[str, Any]) -> None:
-        pct = self.derived.get("pressurizer_pct", 60.0)
-        if pct < 50.0 and not self.pressurizer_spraying and "VALVE_OPEN" in self.writable:
-            if self._valve("pressuriseur", "VALVE_OPEN", self.PRESSURIZER_VALVE, "Niveau inférieur à 50 %"):
+        temperature_raw = s.get("PRESSURIZER_TEMPERATURE")
+        operative_raw = s.get("PRESSURIZER_TEMPERATURE_OPERATIVE")
+        if temperature_raw is None or operative_raw is None:
+            return
+
+        temperature = as_number(temperature_raw)
+        operative = as_number(operative_raw)
+        open_at = operative + self.PRESSURIZER_SPRAY_OPEN_MARGIN_C
+        close_at = operative + self.PRESSURIZER_SPRAY_CLOSE_MARGIN_C
+
+        # Resynchroniser la mémoire du pilote avec l'état réel de la vanne.
+        # Cela permet notamment de la refermer après un redémarrage de l'app.
+        try:
+            valve = self.client.valves().get(self.PRESSURIZER_VALVE)
+        except (OSError, RuntimeError, ValueError, urllib.error.URLError, json.JSONDecodeError):
+            valve = None
+        if isinstance(valve, dict):
+            actuator = status_key(valve.get("Actuator", valve.get("actuator", "")))
+            if bool(valve.get("IsOpened", valve.get("isOpened", False))) or actuator in {"OPEN", "OPENING", "OUVERTURE"}:
                 self.pressurizer_spraying = True
-        elif pct >= 60.0 and self.pressurizer_spraying and "VALVE_CLOSE" in self.writable:
-            if self._valve("pressuriseur", "VALVE_CLOSE", self.PRESSURIZER_VALVE, "Niveau revenu à 60 %"):
+            elif bool(valve.get("IsClosed", valve.get("isClosed", False))) or actuator in {"CLOSE", "CLOSING", "FERMETURE"}:
+                self.pressurizer_spraying = False
+
+        if temperature >= open_at and not self.pressurizer_spraying and "VALVE_OPEN" in self.writable:
+            if self._valve(
+                "pressuriseur", "VALVE_OPEN", self.PRESSURIZER_VALVE,
+                f"Température {temperature:.1f} °C, consigne {operative:.1f} °C",
+            ):
+                self.pressurizer_spraying = True
+        elif temperature <= close_at and self.pressurizer_spraying and "VALVE_CLOSE" in self.writable:
+            if self._valve(
+                "pressuriseur", "VALVE_CLOSE", self.PRESSURIZER_VALVE,
+                f"Température revenue à {temperature:.1f} °C",
+            ):
                 self.pressurizer_spraying = False
 
     def _control_primary_makeup(self, s: dict[str, Any]) -> None:

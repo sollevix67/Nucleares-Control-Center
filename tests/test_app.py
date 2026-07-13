@@ -414,6 +414,43 @@ class ControlTests(unittest.TestCase):
             finally:
                 app.DATA_DIR = old_data
 
+    def test_pressurizer_spray_closes_when_temperature_is_normal(self):
+        with MockServer() as mock, tempfile.TemporaryDirectory() as temp:
+            old_data = app.DATA_DIR; app.DATA_DIR = Path(temp)
+            try:
+                center = app.ControlCenter(self.config(mock.url))
+                center.readable, center.writable = center.client.discover()
+                state = center.client.batch_get(center.readable)
+
+                state["PRESSURIZER_TEMPERATURE"] = 360.0
+                state["PRESSURIZER_TEMPERATURE_OPERATIVE"] = 350.0
+                center._control_pressurizer(state)
+                with mock.plant.lock:
+                    self.assertIn(("VALVE_OPEN", app.ControlCenter.PRESSURIZER_VALVE), mock.plant.commands)
+                    self.assertTrue(mock.plant.pressurizer_valve["IsOpened"])
+
+                # La température, et non le niveau, déclenche la fermeture.
+                state["PRESSURIZER_TEMPERATURE"] = 350.0
+                state["PRESSURIZER_FILL_LEVEL"] = 2.5
+                with mock.plant.lock:
+                    mock.plant.commands.clear()
+                center._control_pressurizer(state)
+                with mock.plant.lock:
+                    self.assertIn(("VALVE_CLOSE", app.ControlCenter.PRESSURIZER_VALVE), mock.plant.commands)
+                    self.assertTrue(mock.plant.pressurizer_valve["IsClosed"])
+
+                # Même après perte de l'état interne, la télémétrie de la vanne
+                # permet de détecter qu'elle est ouverte et de la refermer.
+                mock.plant.set("VALVE_OPEN", app.ControlCenter.PRESSURIZER_VALVE)
+                center.pressurizer_spraying = False
+                with mock.plant.lock:
+                    mock.plant.commands.clear()
+                center._control_pressurizer(state)
+                with mock.plant.lock:
+                    self.assertIn(("VALVE_CLOSE", app.ControlCenter.PRESSURIZER_VALVE), mock.plant.commands)
+            finally:
+                app.DATA_DIR = old_data
+
     def test_chemistry_captures_current_ppm(self):
         with MockServer(chemistry_enabled=True) as mock, tempfile.TemporaryDirectory() as temp:
             old_data = app.DATA_DIR; app.DATA_DIR = Path(temp)
