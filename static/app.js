@@ -157,6 +157,21 @@ function renderGenerators(generators) {
   }
 }
 
+function renderElectrical(electrical = {}) {
+  const transformers = electrical.transformers || [];
+  $("transformer-list").innerHTML = transformers.length ? transformers.map(transformer => `<div class="transformer-item ${transformer.energized ? 'energized' : ''}"><div class="transformer-symbol">T</div><div><strong>${escapeHtml(transformer.label)}</strong><small>${escapeHtml(transformer.detail)}</small></div><div class="transformer-reading"><span class="status-pill ${transformer.status_class || ''}">${escapeHtml(transformer.status)}</span><b>${measurement(transformer.power_kw === null ? null : transformer.power_kw / 1000,"MW")}</b></div></div>`).join("") : '<div class="empty compact">Aucun flux électrique disponible</div>';
+  const resistors = electrical.resistors || {}, banks = resistors.banks || [];
+  $("resistor-status").textContent = resistors.status || "INDISPONIBLE";
+  $("resistor-status").className = `status-pill ${resistors.status_class || ''}`;
+  $("resistor-absorbed").textContent = measurement(resistors.absorbed_mw,"MW");
+  $("resistor-capacity").textContent = measurement(resistors.capacity_mw,"MW");
+  $("resistor-surplus").textContent = measurement(resistors.surplus_mw,"MW");
+  $("resistor-load").textContent = `${fmt(resistors.load_pct)} %`;
+  setBar("resistor-load-bar",resistors.load_pct,"high");
+  const bankCards = [{id:"M",active:resistors.main_on,available:resistors.available,label:"GÉNÉRAL"},...banks.map(bank=>({...bank,label:`BANC ${bank.id}`}))];
+  $("resistor-banks").innerHTML = bankCards.map(bank=>`<div class="resistor-bank ${bank.active ? 'active' : ''} ${!bank.available ? 'unavailable' : ''}"><span>${escapeHtml(bank.label)}</span><strong>${!bank.available ? 'INDISP.' : bank.active ? 'ACTIF' : 'ARRÊT'}</strong></div>`).join("");
+}
+
 function renderPoisons(poisons = {}) {
   const iodine = poisons.iodine || {}, xenon = poisons.xenon || {};
   const trend = item => item.trend_per_min === null || item.trend_per_min === undefined ? "—" : `${item.trend_per_min >= 0 ? "+" : ""}${fmt(item.trend_per_min,3)} /min`;
@@ -227,7 +242,7 @@ function render(snapshot) {
   $("chemistry-status").className = `status-pill ${chemistry.status === 'ready' ? 'ok' : chemistry.status === 'fault' ? 'danger' : chemistry.status === 'read_only' ? 'warn' : ''}`;
   $("chemistry-detail").textContent = chemistry.message || 'État inconnu';
   $("boron-ppm").textContent = `${fmt(chemistry.ppm)} ppm`;
-  renderReservoirs(d, chemistry); renderGenerators(d.generators || {}); renderPoisons(d.poisons || {});
+  renderReservoirs(d, chemistry); renderGenerators(d.generators || {}); renderElectrical(d.electrical || {}); renderPoisons(d.poisons || {});
   renderAlarms(snapshot.alarms || []); renderJournal(snapshot.actions || []);
 }
 

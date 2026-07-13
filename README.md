@@ -76,6 +76,12 @@ Certaines versions du webserveur renvoient un code numérique à la place du tex
 
 Le bouton **Alarmes** est rouge lorsqu’au moins une alarme reste à acquitter, vert lorsque toutes les alarmes actives sont acquittées, et neutre en l’absence d’alarme. Les boutons individuels utilisent le même code couleur. La page Alarmes comporte également un bouton **Tout acquitter** ; l’acquittement ne supprime pas l’alarme, qui disparaît uniquement lorsque sa condition revient à la normale.
 
+### Transformateurs et bancs de résistances
+
+La zone **Production** affiche trois chemins électriques : transformateur de production, transformateur du réseau externe et transformateur de secours. Le webserveur ne publie pas directement l’état interne, la tension ni la température des transformateurs. L’application indique donc explicitement une **télémétrie indirecte** et déduit leur mise sous tension à partir de `POWER_FROM_TURBINE_KW`, `POWER_FROM_EXTERNAL_KW`, `EMERGENCY_GENERATOR_POWER_OUTPUT_KW` et `EMERGENCY_BATTERIES_POWER_OUTPUT_KW`.
+
+Le panneau des bancs de résistances affiche l’interrupteur général, les quatre bancs, la capacité d’absorption active, l’énergie effectivement dérivée, le surplus disponible et le taux de charge. Il utilise les variables `RESISTOR_BANKS_MAIN_SWITCH`, `RESISTOR_BANK_01_SWITCH` à `RESISTOR_BANK_04_SWITCH`, `RES_ABSORPTION_CAPACITY_MW`, `RES_EFFECTIVELY_DERIVED_ENERGY_MW` et `RES_DIVERT_SURPLUS_FROM_MW`.
+
 Les pourcentages du jeu sont normalisés automatiquement : une valeur de vide condenseur comprise entre `0` et `1` est interprétée comme une fraction (`1,0 = 100 %`), tandis qu’une valeur déjà comprise sur l’échelle `0–100` est conservée.
 
 ### Module chimique optionnel

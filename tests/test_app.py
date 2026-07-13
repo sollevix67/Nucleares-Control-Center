@@ -109,6 +109,14 @@ class ControlTests(unittest.TestCase):
                 self.assertFalse(emergency[1]["installed"])
                 self.assertEqual(emergency[1]["status"], "NON INSTALLÉ")
                 self.assertEqual(emergency[1]["installation_source"], "RÉGLAGE MANUEL")
+                electrical = center.derived["electrical"]
+                self.assertEqual(len(electrical["transformers"]), 3)
+                self.assertTrue(electrical["transformers"][0]["available"])
+                self.assertEqual(electrical["transformers"][0]["telemetry"], "INDIRECTE")
+                self.assertTrue(electrical["resistors"]["available"])
+                self.assertTrue(electrical["resistors"]["main_on"])
+                self.assertEqual(len(electrical["resistors"]["banks"]), 4)
+                self.assertEqual(electrical["resistors"]["active_banks"], 1)
                 self.assertEqual(center.derived["chemical_reservoirs"], [])
             finally:
                 app.DATA_DIR = old_data
@@ -461,6 +469,8 @@ class ControlTests(unittest.TestCase):
                 self.assertIn('id="xenon-power-ramp"', html)
                 self.assertIn('id="ack-all"', html)
                 self.assertIn('id="emergency-generator-2-installation"', html)
+                self.assertIn('id="transformer-list"', html)
+                self.assertIn('id="resistor-banks"', html)
                 javascript = urllib.request.urlopen(base + "/app.js").read().decode("utf-8")
                 self.assertIn("d.vacuum_pct", javascript)
                 self.assertIn('generator.fuel_unit || "L"', javascript)
@@ -469,6 +479,7 @@ class ControlTests(unittest.TestCase):
                 self.assertIn("renderPoisons", javascript)
                 self.assertIn("acknowledgeAll", javascript)
                 self.assertIn("alarm-needs-ack", javascript)
+                self.assertIn("renderElectrical", javascript)
                 request = urllib.request.Request(base + "/api/autopilot", data=b'{"enabled":true}',
                                                  headers={"Content-Type": "application/json"}, method="POST")
                 response = json.load(urllib.request.urlopen(request))

@@ -95,6 +95,23 @@
             <canvas id="power-chart" width="800" height="200" aria-label="Historique de production"></canvas>
           </article>
 
+          <article class="panel transformer-panel" data-supervision-zones="synthesis production emergency">
+            <header><div><span class="eyebrow">DISTRIBUTION ÉLECTRIQUE</span><h1>Transformateurs</h1></div><span class="status-pill warn">TÉLÉMÉTRIE INDIRECTE</span></header>
+            <div id="transformer-list" class="transformer-list"><div class="empty compact">Aucun flux électrique disponible</div></div>
+            <p class="panel-note">Le webserveur ne publie pas l’état interne ni la température des transformateurs. Les états affichés sont déduits des puissances transitant depuis les turbines, le réseau externe et les sources de secours.</p>
+          </article>
+
+          <article class="panel resistor-panel" data-supervision-zones="synthesis production">
+            <header><div><span class="eyebrow">DISSIPATION DU SURPLUS</span><h1>Bancs de résistances</h1></div><span id="resistor-status" class="status-pill">—</span></header>
+            <div class="resistor-overview">
+              <div><span>ÉNERGIE ABSORBÉE</span><strong id="resistor-absorbed">— MW</strong></div>
+              <div><span>CAPACITÉ ACTIVE</span><strong id="resistor-capacity">— MW</strong></div>
+              <div><span>SURPLUS À DÉRIVER</span><strong id="resistor-surplus">— MW</strong></div>
+            </div>
+            <div class="resistor-load"><div class="bar"><i id="resistor-load-bar"></i></div><span id="resistor-load">— %</span></div>
+            <div id="resistor-banks" class="resistor-banks"></div>
+          </article>
+
           <article class="panel poison-panel" data-supervision-zones="synthesis reactor chemistry">
             <header><div><span class="eyebrow">POISONS NEUTRONIQUES</span><h1>Xénon et iode</h1></div><span id="poison-status" class="status-pill">—</span></header>
             <div class="poison-grid">

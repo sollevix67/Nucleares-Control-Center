@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-APP_VERSION = "0.4.2"
+APP_VERSION = "0.5.0"
 BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 USER_ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 STATIC_DIR = BUNDLE_ROOT / "static"
@@ -826,6 +826,76 @@ class ControlCenter:
                 "pressurizer": game_text_fr(s.get(f"EMERGENCY_GENERATOR_{index}_PRESSURIZER")) if installed else None,
                 "maintenance": maintenance,
             })
+
+        turbine_power = optional_number("POWER_FROM_TURBINE_KW")
+        if turbine_power is None and any(s.get(f"GENERATOR_{index}_KW") is not None for index in range(3)):
+            turbine_power = round(generated, 2)
+        external_power = optional_number("POWER_FROM_EXTERNAL_KW")
+        emergency_generator_power = optional_number("EMERGENCY_GENERATOR_POWER_OUTPUT_KW")
+        emergency_battery_power = optional_number("EMERGENCY_BATTERIES_POWER_OUTPUT_KW")
+        emergency_power = None
+        if emergency_generator_power is not None or emergency_battery_power is not None:
+            emergency_power = round((emergency_generator_power or 0.0) + (emergency_battery_power or 0.0), 2)
+
+        transformers: list[dict[str, Any]] = []
+        for identifier, label, detail, power in (
+            ("production", "Transformateur de production", "Énergie issue des turbines", turbine_power),
+            ("external", "Transformateur réseau externe", "Alimentation provenant du réseau", external_power),
+            ("emergency", "Transformateur de secours", "Groupes de secours et batteries", emergency_power),
+        ):
+            available = power is not None
+            energized = available and abs(float(power)) > 0.1
+            transformers.append({
+                "id": identifier,
+                "label": label,
+                "detail": detail,
+                "available": available,
+                "energized": energized,
+                "status": "SOUS TENSION" if energized else "AUCUN TRANSIT" if available else "INDISPONIBLE",
+                "status_class": "ok" if energized else "" if available else "warn",
+                "power_kw": power,
+                "telemetry": "INDIRECTE",
+            })
+
+        resistor_banks: list[dict[str, Any]] = []
+        for index in range(1, 5):
+            name = f"RESISTOR_BANK_0{index}_SWITCH"
+            raw = s.get(name)
+            resistor_banks.append({
+                "id": index,
+                "variable": name,
+                "available": raw is not None,
+                "active": bool(raw) if raw is not None else False,
+            })
+        resistor_main_raw = s.get("RESISTOR_BANKS_MAIN_SWITCH")
+        resistor_available = resistor_main_raw is not None or any(bank["available"] for bank in resistor_banks)
+        resistor_main_on = bool(resistor_main_raw) if resistor_main_raw is not None else False
+        resistor_capacity = optional_number("RES_ABSORPTION_CAPACITY_MW")
+        resistor_absorbed = optional_number("RES_EFFECTIVELY_DERIVED_ENERGY_MW")
+        resistor_surplus = optional_number("RES_DIVERT_SURPLUS_FROM_MW")
+        resistor_load = None
+        if resistor_capacity is not None and resistor_capacity > 0 and resistor_absorbed is not None:
+            resistor_load = max(0.0, min(100.0, resistor_absorbed / resistor_capacity * 100.0))
+        if not resistor_available:
+            resistor_status, resistor_class = "INDISPONIBLE", "warn"
+        elif not resistor_main_on:
+            resistor_status, resistor_class = "HORS SERVICE", ""
+        elif resistor_absorbed is not None and resistor_absorbed > 0.01:
+            resistor_status, resistor_class = "ABSORPTION", "ok"
+        else:
+            resistor_status, resistor_class = "EN ATTENTE", "ok"
+        resistors = {
+            "available": resistor_available,
+            "main_on": resistor_main_on,
+            "status": resistor_status,
+            "status_class": resistor_class,
+            "banks": resistor_banks,
+            "active_banks": sum(1 for bank in resistor_banks if bank["active"]),
+            "capacity_mw": resistor_capacity,
+            "absorbed_mw": resistor_absorbed,
+            "surplus_mw": resistor_surplus,
+            "load_pct": None if resistor_load is None else round(resistor_load, 2),
+        }
         return {
             "generated_kw": round(generated, 2),
             "demand_kw": round(demand_kw, 2),
@@ -838,6 +908,7 @@ class ControlCenter:
             "reservoirs": reservoirs,
             "chemical_reservoirs": chemical_reservoirs,
             "generators": {"main": main_generators, "emergency": emergency_generators},
+            "electrical": {"transformers": transformers, "resistors": resistors},
             "poisons": self._poison_info(s),
         }
 
