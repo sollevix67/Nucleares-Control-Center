@@ -365,6 +365,55 @@ class ControlTests(unittest.TestCase):
             finally:
                 app.DATA_DIR = old_data
 
+    def test_retention_tank_is_maintained_around_half_level(self):
+        with MockServer() as mock, tempfile.TemporaryDirectory() as temp:
+            old_data = app.DATA_DIR; app.DATA_DIR = Path(temp)
+            try:
+                center = app.ControlCenter(self.config(mock.url))
+                center.readable, center.writable = center.client.discover()
+                state = center.client.batch_get(center.readable)
+
+                state["VACUUM_RETENTION_TANK_VOLUME"] = 22400.0  # 56 %
+                state["STEAM_EJECTOR_CONDENSER_RETURN_VALVE_ACTUAL"] = 0.0
+                state["STEAM_EJECTOR_CONDENSER_RETURN_VALVE_ORDERED"] = 0.0
+                state["CONDENSER_VACUUM_PUMP_ACTIVE"] = True
+                center.derived = center._derive(state)
+                with mock.plant.lock:
+                    mock.plant.commands.clear()
+                center._control_retention(state)
+                commands = dict(mock.plant.commands)
+                self.assertTrue(center.retention_draining)
+                self.assertEqual(commands["CONDENSER_VACUUM_PUMP_START_STOP"], False)
+                self.assertEqual(commands["STEAM_EJECTOR_CONDENSER_RETURN_VALVE"], 12)
+
+                state["VACUUM_RETENTION_TANK_VOLUME"] = 20000.0  # 50 %
+                state["STEAM_EJECTOR_CONDENSER_RETURN_VALVE_ACTUAL"] = 12.0
+                state["STEAM_EJECTOR_CONDENSER_RETURN_VALVE_ORDERED"] = 12.0
+                state["CONDENSER_VACUUM_PUMP_ACTIVE"] = False
+                center.derived = center._derive(state)
+                with mock.plant.lock:
+                    mock.plant.commands.clear()
+                center.last_write.clear()
+                center._control_retention(state)
+                commands = dict(mock.plant.commands)
+                self.assertFalse(center.retention_draining)
+                self.assertEqual(commands["STEAM_EJECTOR_CONDENSER_RETURN_VALVE"], 0)
+                self.assertEqual(commands["CONDENSER_VACUUM_PUMP_START_STOP"], True)
+
+                state["VACUUM_RETENTION_TANK_VOLUME"] = 15200.0  # 38 %
+                state["STEAM_EJECTOR_CONDENSER_RETURN_VALVE_ACTUAL"] = 8.0
+                state["STEAM_EJECTOR_CONDENSER_RETURN_VALVE_ORDERED"] = 8.0
+                state["CONDENSER_VACUUM_PUMP_ACTIVE"] = True
+                center.derived = center._derive(state)
+                with mock.plant.lock:
+                    mock.plant.commands.clear()
+                center.last_write.clear()
+                center._control_retention(state)
+                commands = dict(mock.plant.commands)
+                self.assertEqual(commands["STEAM_EJECTOR_CONDENSER_RETURN_VALVE"], 0)
+            finally:
+                app.DATA_DIR = old_data
+
     def test_chemistry_captures_current_ppm(self):
         with MockServer(chemistry_enabled=True) as mock, tempfile.TemporaryDirectory() as temp:
             old_data = app.DATA_DIR; app.DATA_DIR = Path(temp)

@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-APP_VERSION = "0.6.0"
+APP_VERSION = "0.6.1"
 BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 USER_ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 STATIC_DIR = BUNDLE_ROOT / "static"
@@ -442,6 +442,8 @@ class ControlCenter:
     PRESSURIZER_VALVE = "Valvula_Pressurizer_Spray"
     PRIMARY_COOLING_TANK_MAX = 176717.0
     RETENTION_MAX = 40000.0
+    RETENTION_TARGET_PCT = 50.0
+    RETENTION_DRAIN_START_PCT = 55.0
     CHEM_DOSAGE_COMMAND = "CHEM_BORON_DOSAGE_ORDERED_RATE"
     CHEM_FILTER_COMMAND = "CHEM_BORON_FILTER_ORDERED_SPEED"
     POISON_ISOTOPES = ("IODINE", "XENON")
@@ -1275,18 +1277,45 @@ class ControlCenter:
             self._write("condenseur", "CONDENSER_CIRCULATION_PUMP_ORDERED_SPEED", 25.0, "Vitesse anti-surrefroidissement", cooldown=30)
 
     def _control_retention(self, s: dict[str, Any]) -> None:
-        pct = self.derived.get("retention_pct", 0.0)
+        pct = self.derived.get("retention_pct")
         command = "STEAM_EJECTOR_CONDENSER_RETURN_VALVE"
-        if command not in self.writable:
+        if pct is None or command not in self.writable:
             return
-        if pct > 75.0 and not self.retention_draining:
+
+        actual = as_number(s.get("STEAM_EJECTOR_CONDENSER_RETURN_VALVE_ACTUAL"))
+        ordered = as_number(s.get("STEAM_EJECTOR_CONDENSER_RETURN_VALVE_ORDERED"))
+        last_order = as_number(self.last_write.get(command, (0, 0))[0])
+        valve_opening = max(actual, ordered, last_order)
+        pump_command = "CONDENSER_VACUUM_PUMP_START_STOP"
+        pump_available = pump_command in self.writable
+        pump_active = bool(s.get("CONDENSER_VACUUM_PUMP_ACTIVE"))
+
+        if pct >= self.RETENTION_DRAIN_START_PCT:
             self.retention_draining = True
-            if "CONDENSER_VACUUM_PUMP_START_STOP" in self.writable:
-                self._write("rétention", "CONDENSER_VACUUM_PUMP_START_STOP", False, "Vidange rétention")
-            self._write("rétention", command, 25.0, "Vidange au-dessus de 75 %")
-        elif pct <= 50.0 and self.retention_draining:
-            self._write("rétention", command, 0.0, "Vidange terminée à 50 %")
+
+        if self.retention_draining and pct <= self.RETENTION_TARGET_PCT:
+            self._write("rétention", command, 0, "Niveau cible de 50 % atteint", cooldown=0)
             self.retention_draining = False
+            if pump_available and not pump_active:
+                self._write("rétention", pump_command, True, "Reprise du vide après vidange", cooldown=0)
+            return
+
+        if self.retention_draining:
+            if pump_available and pump_active:
+                self._write("rétention", pump_command, False, "Vidange du réservoir de rétention")
+            opening = max(5, min(25, int(round((pct - self.RETENTION_TARGET_PCT) * 2.0))))
+            self._write(
+                "rétention", command, opening,
+                f"Maintien du réservoir vers 50 %, niveau {pct:.1f} %",
+            )
+            return
+
+        # Sous la limite haute, la vanne doit rester fermée afin que le
+        # réservoir puisse se remplir naturellement par le circuit de vide.
+        if valve_opening > 0:
+            self._write("rétention", command, 0, f"Vanne fermée, niveau {pct:.1f} %", cooldown=0)
+        if pump_available and not pump_active:
+            self._write("rétention", pump_command, True, "Maintien du vide et remplissage naturel")
 
     def _control_pressurizer(self, s: dict[str, Any]) -> None:
         pct = self.derived.get("pressurizer_pct", 60.0)

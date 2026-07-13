@@ -23,6 +23,7 @@ READABLE = [
     "PRESSURIZER_FILL_LEVEL", "CORE_PRIMARY_CIRCUIT_COOLING_TANK_VOLUME",
     "CORE_POOL_COOLANT_TANK_VOLUME", "CORE_EXTERNAL_COOLANT_RESERVOIR_VOLUME",
     "FREIGHT_PUMP_FEEDWATER_ACTIVE", "VACUUM_RETENTION_TANK_VOLUME",
+    "STEAM_EJECTOR_CONDENSER_RETURN_VALVE_ACTUAL", "STEAM_EJECTOR_CONDENSER_RETURN_VALVE_ORDERED",
     "CORE_IODINE_GENERATION", "CORE_IODINE_CUMULATIVE",
     "CORE_XENON_GENERATION", "CORE_XENON_CUMULATIVE",
     "POWER_FROM_TURBINE_KW", "POWER_FROM_EXTERNAL_KW", "EMERGENCY_GENERATOR_POWER_OUTPUT_KW",
@@ -98,6 +99,8 @@ class Plant:
             "PRESSURIZER_FILL_LEVEL": 60.0, "CORE_PRIMARY_CIRCUIT_COOLING_TANK_VOLUME": 106030.0,
             "CORE_POOL_COOLANT_TANK_VOLUME": 80000.0, "CORE_EXTERNAL_COOLANT_RESERVOIR_VOLUME": 150000.0,
             "FREIGHT_PUMP_FEEDWATER_ACTIVE": False, "VACUUM_RETENTION_TANK_VOLUME": 22000.0,
+            "STEAM_EJECTOR_CONDENSER_RETURN_VALVE_ACTUAL": 0.0,
+            "STEAM_EJECTOR_CONDENSER_RETURN_VALVE_ORDERED": 0.0,
             "CORE_IODINE_GENERATION": 0.8, "CORE_IODINE_CUMULATIVE": 12.0,
             "CORE_XENON_GENERATION": 0.6, "CORE_XENON_CUMULATIVE": 8.0,
             "POWER_FROM_TURBINE_KW": 126000.0, "POWER_FROM_EXTERNAL_KW": 0.0,
@@ -165,6 +168,9 @@ class Plant:
                 self.values["CONDENSER_VACUUM_PUMP_ACTIVE"] = bool(value)
             elif variable == "CONDENSER_CIRCULATION_PUMP_SWITCH":
                 self.values["CONDENSER_CIRCULATION_PUMP_ACTIVE"] = bool(value)
+            elif variable == "STEAM_EJECTOR_CONDENSER_RETURN_VALVE":
+                self.values["STEAM_EJECTOR_CONDENSER_RETURN_VALVE_ORDERED"] = float(value)
+                self.values["STEAM_EJECTOR_CONDENSER_RETURN_VALVE_ACTUAL"] = float(value)
             elif variable == "FREIGHT_PUMP_FEEDWATER_SWITCH":
                 self.values["FREIGHT_PUMP_FEEDWATER_ACTIVE"] = bool(value)
             elif variable == "CHEM_BORON_DOSAGE_ORDERED_RATE":
@@ -217,6 +223,15 @@ class Plant:
                     self.values["CONDENSER_VAPOR_VOLUME"] = max(30000, self.values["CONDENSER_VAPOR_VOLUME"] - 120)
                 if self.values["FREIGHT_PUMP_FEEDWATER_ACTIVE"]:
                     self.values["COOLANT_CORE_PRIMARY_LOOP_LEVEL"] = min(100, self.values["COOLANT_CORE_PRIMARY_LOOP_LEVEL"] + .08)
+                retention_valve = float(self.values["STEAM_EJECTOR_CONDENSER_RETURN_VALVE_ACTUAL"])
+                if retention_valve > 0:
+                    self.values["VACUUM_RETENTION_TANK_VOLUME"] = max(
+                        0, self.values["VACUUM_RETENTION_TANK_VOLUME"] - retention_valve * 8
+                    )
+                elif self.values["CONDENSER_VACUUM_PUMP_ACTIVE"]:
+                    self.values["VACUUM_RETENTION_TANK_VOLUME"] = min(
+                        40000, self.values["VACUUM_RETENTION_TANK_VOLUME"] + 4
+                    )
                 if "CHEM_BORON_PPM" in self.values:
                     dosage = float(self.values["CHEM_BORON_DOSAGE_ACTUAL"])
                     filtering = float(self.values["CHEM_BORON_FILTER_ACTUAL"])

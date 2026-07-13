@@ -52,7 +52,7 @@ Pour simuler également un module chimique installé, lancer `python mock_game.p
 | Turbines | Régulation principale par les MSCV, avec appui progressif des bypass en cas de surplus important |
 | Secondaire | Débit des pompes selon la vapeur et le niveau des générateurs |
 | Condenseur | Remplissage entre 45 et 60 %, pompe à vide, circulation à 25 % |
-| Rétention | Vidange automatique entre 75 et 50 % |
+| Rétention | Maintien autour de 50 % : remplissage naturel vanne fermée, vidange progressive entre 55 et 50 % |
 | Pressuriseur | Commande de la vanne motorisée entre 50 et 60 % |
 | Primaire | Appoint d’eau entre 80 et 90 % |
 | Chimie | Détection optionnelle du module, maintien du bore par dosage/filtration, sécurités des pompes |
