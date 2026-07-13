@@ -69,6 +69,13 @@ class ControlTests(unittest.TestCase):
                 self.assertAlmostEqual(center.derived["condenser_fill_pct"], 55.0)
                 expected_power = sum(state[f"GENERATOR_{i}_KW"] for i in range(3))
                 self.assertAlmostEqual(center.derived["generated_kw"], expected_power)
+                reservoir_ids = {item["id"] for item in center.derived["reservoirs"]}
+                self.assertIn("primary_cooling_tank", reservoir_ids)
+                self.assertIn("external_coolant", reservoir_ids)
+                self.assertEqual(len(center.derived["generators"]["main"]), 3)
+                self.assertEqual(center.derived["generators"]["main"][0]["status"], "COUPLÉ")
+                self.assertEqual(len(center.derived["generators"]["emergency"]), 2)
+                self.assertEqual(center.derived["chemical_reservoirs"], [])
             finally:
                 app.DATA_DIR = old_data
 
@@ -152,6 +159,22 @@ class ControlTests(unittest.TestCase):
             finally:
                 app.DATA_DIR = old_data
 
+    def test_future_chemical_tank_level_is_discovered(self):
+        with MockServer(chemistry_enabled=True) as mock, tempfile.TemporaryDirectory() as temp:
+            old_data = app.DATA_DIR; app.DATA_DIR = Path(temp)
+            try:
+                center = app.ControlCenter(self.config(mock.url))
+                state = dict(mock.plant.values)
+                state["CHEM_BORIC_ACID_TANK_LEVEL"] = 49.0
+                derived = center._derive(state)
+                self.assertEqual(len(derived["chemical_reservoirs"]), 1)
+                tank = derived["chemical_reservoirs"][0]
+                self.assertEqual(tank["variable"], "CHEM_BORIC_ACID_TANK_LEVEL")
+                self.assertEqual(tank["value"], 49.0)
+                self.assertEqual(tank["unit"], "%")
+            finally:
+                app.DATA_DIR = old_data
+
     def test_chemistry_not_installed_is_silent(self):
         with MockServer() as mock, tempfile.TemporaryDirectory() as temp:
             old_data = app.DATA_DIR; app.DATA_DIR = Path(temp)
@@ -204,6 +227,7 @@ class ControlTests(unittest.TestCase):
                 self.assertTrue(health["ok"]); self.assertTrue(health["game_connected"])
                 html = urllib.request.urlopen(base + "/").read().decode("utf-8")
                 self.assertIn("NUCLEARES", html); self.assertIn("autopilot-toggle", html)
+                self.assertIn("reservoir-list", html); self.assertIn("main-generator-list", html)
                 request = urllib.request.Request(base + "/api/autopilot", data=b'{"enabled":true}',
                                                  headers={"Content-Type": "application/json"}, method="POST")
                 response = json.load(urllib.request.urlopen(request))
@@ -211,6 +235,8 @@ class ControlTests(unittest.TestCase):
                 snapshot = json.load(urllib.request.urlopen(base + "/api/state"))
                 self.assertEqual(snapshot["capabilities"]["readable"], len(center.readable))
                 self.assertGreater(snapshot["capabilities"]["writable"], 10)
+                self.assertGreaterEqual(len(snapshot["derived"]["reservoirs"]), 5)
+                self.assertEqual(len(snapshot["derived"]["generators"]["main"]), 3)
                 history = json.load(urllib.request.urlopen(base + "/api/history?variables=CORE_TEMP&seconds=60"))
                 self.assertIn("CORE_TEMP", history)
             finally:

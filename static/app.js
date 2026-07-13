@@ -59,6 +59,50 @@ function trainCards(s, targetTotal) {
   }).join("");
 }
 
+function measurement(value, unit = "") {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "—";
+  const number = Number(value);
+  const rendered = unit === "L" ? number.toLocaleString("fr-FR", {maximumFractionDigits: 0}) : fmt(number);
+  return `${rendered}${unit ? ` ${unit}` : ""}`;
+}
+
+function reservoirRows(items) {
+  return items.map(item => {
+    const percent = item.percent === null || item.percent === undefined ? null : Math.max(0, Math.min(100, Number(item.percent)));
+    return `<div class="reservoir-item"><div><strong>${escapeHtml(item.label)}</strong><small>${escapeHtml(item.variable || item.id)}</small></div>
+      <div class="reservoir-meter ${percent === null ? 'no-scale' : ''}"><i style="width:${percent ?? 0}%"></i></div>
+      <div class="reservoir-value">${escapeHtml(measurement(item.value,item.unit))}</div></div>`;
+  }).join("");
+}
+
+function renderReservoirs(derived, chemistry) {
+  const reservoirs = derived.reservoirs || [];
+  $("reservoir-list").innerHTML = reservoirs.length ? reservoirRows(reservoirs) : '<div class="empty compact">Aucun niveau exposé</div>';
+  const chemicalSection = $("chemical-reservoir-section");
+  const chemical = derived.chemical_reservoirs || [];
+  chemicalSection.classList.toggle("hidden", !chemistry.installed);
+  if (chemistry.installed) {
+    $("chemical-reservoir-note").textContent = chemical.length ? `${chemical.length} mesure(s)` : "NIVEAU NON EXPOSÉ";
+    $("chemical-reservoir-list").innerHTML = chemical.length ? reservoirRows(chemical) : '<div class="empty compact">Le jeu ne publie pas encore le niveau du réservoir d’acide borique.</div>';
+  }
+}
+
+function renderGenerators(generators) {
+  const main = generators.main || [];
+  $("main-generator-list").innerHTML = main.length ? main.map(generator => {
+    const breaker = generator.breaker_open === null ? "DISJ. —" : generator.breaker_open ? "DISJ. OUVERT" : "DISJ. FERMÉ";
+    return `<div class="generator-row"><div class="generator-number">G${generator.id + 1}</div><div class="generator-copy"><strong>Générateur principal ${generator.id + 1}</strong><small><span class="status-pill ${generator.status_class}">${escapeHtml(generator.status)}</span> · ${breaker}</small></div>
+      <div class="generator-metrics"><span>PUISSANCE<b>${measurement(generator.power_kw === null ? null : generator.power_kw / 1000,"MW")}</b></span><span>VITESSE<b>${measurement(generator.rpm,"RPM")}</b></span><span>FRÉQUENCE<b>${measurement(generator.frequency,"Hz")}</b></span><span>TENSION<b>${measurement(generator.voltage,"V")}</b></span><span>COURANT<b>${measurement(generator.current,"A")}</b></span></div></div>`;
+  }).join("") : '<div class="empty compact">Aucun générateur principal exposé</div>';
+
+  const emergency = generators.emergency || [];
+  $("emergency-generator-section").classList.toggle("hidden", !emergency.length);
+  if (emergency.length) {
+    $("emergency-generator-list").innerHTML = emergency.map(generator => `<div class="generator-row"><div class="generator-number">E${generator.id}</div><div class="generator-copy"><strong>Groupe de secours ${generator.id}</strong><small><span class="status-pill ${generator.status_class}">${escapeHtml(generator.status)}</span> · mode ${escapeHtml(generator.mode ?? '—')}${generator.maintenance ? ' · MAINTENANCE REQUISE' : ''}</small></div>
+      <div class="generator-metrics"><span>CARBURANT<b>${measurement(generator.fuel,"%")}</b></span><span>PRESSURISEUR<b>${escapeHtml(generator.pressurizer ?? '—')}</b></span></div></div>`).join("");
+  }
+}
+
 function renderAlarms(alarms) {
   const count = $("alarm-count"); count.textContent = alarms.length; count.classList.toggle("hot", alarms.length > 0);
   const html = alarms.length ? alarms.map(a => `<div class="alarm-item ${a.severity}"><i></i><div><strong>${escapeHtml(a.title)}</strong><span>${escapeHtml(a.detail)}</span></div><time>${new Date(a.since).toLocaleTimeString()}</time><button data-ack="${escapeHtml(a.alarm_id)}">${a.acknowledged ? "ACQUITTÉE" : "ACQUITTER"}</button></div>`).join("") : '<div class="empty">Aucune alarme active</div>';
@@ -108,6 +152,7 @@ function render(snapshot) {
   $("chemistry-status").className = `status-pill ${chemistry.status === 'ready' ? 'ok' : chemistry.status === 'fault' ? 'danger' : chemistry.status === 'read_only' ? 'warn' : ''}`;
   $("chemistry-detail").textContent = chemistry.message || 'État inconnu';
   $("boron-ppm").textContent = `${fmt(chemistry.ppm)} ppm`;
+  renderReservoirs(d, chemistry); renderGenerators(d.generators || {});
   renderAlarms(snapshot.alarms || []); renderJournal(snapshot.actions || []);
 }
 

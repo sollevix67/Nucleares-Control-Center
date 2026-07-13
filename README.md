@@ -5,6 +5,7 @@ Application locale en français réunissant les trois fonctions demandées pour 
 - tableau de bord temps réel et historique SQLite ;
 - alarmes visuelles et sonores avec acquittement ;
 - pilotage automatique des équipements exposés par le webserveur du jeu.
+- supervision détaillée des réservoirs et des générateurs principaux/de secours.
 
 Elle fonctionne avec le même code sous **Windows 11** et **Ubuntu 24.04**. Elle n’utilise aucune bibliothèque Python externe.
 
@@ -57,11 +58,17 @@ Pour simuler également un module chimique installé, lancer `python mock_game.p
 
 Le pilote ne commande que les variables annoncées comme accessibles en écriture par la version courante du jeu. Une commande absente est ignorée et inscrite dans le journal. Les opérations qui exigent encore une interaction physique du personnage dans le jeu ne peuvent pas être automatisées par le webserveur.
 
+### Réservoirs et générateurs dans Supervision
+
+La page **Supervision** affiche les niveaux disponibles du condenseur, du circuit primaire, du pressuriseur, du réservoir de refroidissement primaire, de la piscine du cœur, du réservoir externe et de la rétention. Les valeurs sont présentées en pourcentage lorsque la capacité est connue, sinon en litres.
+
+Les trois générateurs principaux indiquent leur état de couplage, leur disjoncteur, leur puissance, leur vitesse et leur fréquence. Les groupes électrogènes de secours affichent leur état, leur mode, leur carburant, leur pressuriseur et les besoins de maintenance lorsque ces variables sont exposées.
+
 ### Module chimique optionnel
 
 Une partie peut être lancée sans le module chimique. L’application distingue automatiquement les variables absentes, les pompes non installées, la lecture seule, les défauts et le module prêt. Un module absent ne produit aucune alarme et ne bloque aucune autre zone du pilote.
 
-Le camion chimique n’est pas requis pour utiliser l’acide déjà présent dans le réservoir local. Ses variables sont affichées à titre informatif, mais elles ne bloquent ni le dosage ni la filtration. Le niveau du réservoir d’acide n’étant pas exposé par la liste actuelle du webserveur, il reste à surveiller dans le jeu.
+Le camion chimique n’est pas requis pour utiliser l’acide déjà présent dans le réservoir local. Ses variables sont affichées à titre informatif, mais elles ne bloquent ni le dosage ni la filtration. La zone des réservoirs chimiques n’apparaît que lorsque le module est installé. Le niveau du réservoir d’acide n’étant pas exposé par la liste actuelle du webserveur, elle le signale clairement ; toute future variable `CHEM_*_LEVEL`, `VOLUME`, `TANK` ou `RESERVOIR` sera détectée et affichée automatiquement.
 
 Lorsque le module est prêt, le pilote utilise exclusivement les commandes POST `CHEM_BORON_DOSAGE_ORDERED_RATE` et `CHEM_BORON_FILTER_ORDERED_SPEED`, limitées à la plage `0–100 %`. Le dosage et la filtration sont mutuellement exclusifs. Une pompe à sec, en surcharge, à maintenir ou privée d’énergie provoque l’arrêt des commandes chimiques.
 

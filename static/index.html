@@ -118,6 +118,24 @@
             <header><div><span class="eyebrow">SURVEILLANCE</span><h1>Alarmes actives</h1></div><button class="text-button" data-open="alarms">Tout afficher</button></header>
             <div id="alarm-preview" class="alarm-list"><div class="empty">Aucune alarme active</div></div>
           </article>
+
+          <article class="panel reservoirs-panel">
+            <header><div><span class="eyebrow">INVENTAIRE HYDRAULIQUE</span><h1>Niveaux des réservoirs</h1></div><span class="live-label">LIVE</span></header>
+            <div id="reservoir-list" class="reservoir-list"><div class="empty">Aucun niveau disponible</div></div>
+            <section id="chemical-reservoir-section" class="chemical-reservoir-section hidden">
+              <header><span>PRODUITS CHIMIQUES</span><small id="chemical-reservoir-note"></small></header>
+              <div id="chemical-reservoir-list" class="reservoir-list"></div>
+            </section>
+          </article>
+
+          <article class="panel generators-panel">
+            <header><div><span class="eyebrow">PRODUCTION ET SECOURS</span><h1>État des générateurs</h1></div><span class="live-label">LIVE</span></header>
+            <div id="main-generator-list" class="generator-list"><div class="empty">Aucun générateur détecté</div></div>
+            <section id="emergency-generator-section" class="emergency-generator-section hidden">
+              <header>GROUPES ÉLECTROGÈNES DE SECOURS</header>
+              <div id="emergency-generator-list" class="generator-list"></div>
+            </section>
+          </article>
         </div>
       </section>
 

@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-APP_VERSION = "0.2.1"
+APP_VERSION = "0.3.0"
 BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 USER_ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 STATIC_DIR = BUNDLE_ROOT / "static"
@@ -345,7 +345,9 @@ class ControlCenter:
         "ROD_BANK_POS_0_ACTUAL", "RODS_POS_ACTUAL", "POWER_DEMAND_MW",
         "GENERATOR_0_KW", "GENERATOR_1_KW", "GENERATOR_2_KW",
         "CONDENSER_VOLUME", "CONDENSER_VAPOR_VOLUME", "CONDENSER_VACUUM",
+        "PRESSURIZER_FILL_LEVEL",
         "COOLANT_CORE_PRIMARY_LOOP_LEVEL", "CORE_PRIMARY_CIRCUIT_COOLING_TANK_VOLUME",
+        "CORE_POOL_COOLANT_TANK_VOLUME", "CORE_EXTERNAL_COOLANT_RESERVOIR_VOLUME",
         "VACUUM_RETENTION_TANK_VOLUME",
         "CHEM_BORON_PPM", "CHEM_BORON_DOSAGE_ACTUAL", "CHEM_BORON_FILTER_ACTUAL",
         "CORE_IODINE_GENERATION", "CORE_IODINE_CUMULATIVE",
@@ -353,7 +355,7 @@ class ControlCenter:
     ]
 
     PRESSURIZER_VALVE = "Valvula_Pressurizer_Spray"
-    PRESSURIZER_MAX = 176717.0
+    PRIMARY_COOLING_TANK_MAX = 176717.0
     RETENTION_MAX = 40000.0
     CHEM_DOSAGE_COMMAND = "CHEM_BORON_DOSAGE_ORDERED_RATE"
     CHEM_FILTER_COMMAND = "CHEM_BORON_FILTER_ORDERED_SPEED"
@@ -447,20 +449,124 @@ class ControlCenter:
             self.stop_event.wait(wait)
 
     def _derive(self, s: dict[str, Any]) -> dict[str, Any]:
+        def optional_number(name: str) -> float | None:
+            value = s.get(name)
+            return None if value is None else round(as_number(value), 2)
+
         generated = sum(as_number(s.get(f"GENERATOR_{i}_KW")) for i in range(3))
         demand_kw = as_number(s.get("POWER_DEMAND_MW")) * 1000.0
         liquid = as_number(s.get("CONDENSER_VOLUME"))
         vapor = as_number(s.get("CONDENSER_VAPOR_VOLUME"))
         condenser_fill = liquid / (liquid + vapor) * 100.0 if liquid + vapor > 0 else None
-        pressurizer = as_number(s.get("CORE_PRIMARY_CIRCUIT_COOLING_TANK_VOLUME")) / self.PRESSURIZER_MAX * 100.0
-        retention = as_number(s.get("VACUUM_RETENTION_TANK_VOLUME")) / self.RETENTION_MAX * 100.0
+        primary_tank = optional_number("CORE_PRIMARY_CIRCUIT_COOLING_TANK_VOLUME")
+        pressurizer = optional_number("PRESSURIZER_FILL_LEVEL")
+        if pressurizer is None and primary_tank is not None:
+            pressurizer = primary_tank / self.PRIMARY_COOLING_TANK_MAX * 100.0
+        retention_volume = optional_number("VACUUM_RETENTION_TANK_VOLUME")
+        retention = retention_volume / self.RETENTION_MAX * 100.0 if retention_volume is not None else None
+
+        reservoirs: list[dict[str, Any]] = []
+
+        def add_reservoir(identifier: str, label: str, value: float | None, unit: str, percent: float | None = None) -> None:
+            if value is None:
+                return
+            reservoirs.append({
+                "id": identifier,
+                "label": label,
+                "value": round(value, 2),
+                "unit": unit,
+                "percent": None if percent is None else round(max(0.0, min(100.0, percent)), 2),
+            })
+
+        add_reservoir("condenser", "Condenseur — liquide", optional_number("CONDENSER_VOLUME"), "L", condenser_fill)
+        add_reservoir("primary_loop", "Circuit primaire", optional_number("COOLANT_CORE_PRIMARY_LOOP_LEVEL"), "%", optional_number("COOLANT_CORE_PRIMARY_LOOP_LEVEL"))
+        add_reservoir("pressurizer", "Pressuriseur", pressurizer, "%", pressurizer)
+        add_reservoir(
+            "primary_cooling_tank", "Réservoir refroidissement primaire", primary_tank, "L",
+            None if primary_tank is None else primary_tank / self.PRIMARY_COOLING_TANK_MAX * 100.0,
+        )
+        add_reservoir("core_pool_tank", "Réservoir piscine du cœur", optional_number("CORE_POOL_COOLANT_TANK_VOLUME"), "L")
+        add_reservoir("external_coolant", "Réservoir externe", optional_number("CORE_EXTERNAL_COOLANT_RESERVOIR_VOLUME"), "L")
+        add_reservoir("vacuum_retention", "Réservoir de rétention", retention_volume, "L", retention)
+
+        chemical_reservoirs: list[dict[str, Any]] = []
+        chemical_markers = ("TANK", "RESERVOIR", "LEVEL", "VOLUME", "QUANTITY", "AMOUNT")
+        for name, raw_value in sorted(s.items()):
+            if not name.startswith("CHEM_") or not any(marker in name for marker in chemical_markers):
+                continue
+            if raw_value is None or isinstance(raw_value, bool):
+                continue
+            value = as_number(raw_value)
+            is_percent = "LEVEL" in name and 0 <= value <= 100
+            chemical_reservoirs.append({
+                "id": name.lower(),
+                "label": name.removeprefix("CHEM_").replace("_", " ").title(),
+                "variable": name,
+                "value": round(value, 2),
+                "unit": "%" if is_percent else "L" if any(marker in name for marker in ("TANK", "RESERVOIR", "VOLUME")) else "",
+                "percent": round(value, 2) if is_percent else None,
+            })
+
+        main_generators: list[dict[str, Any]] = []
+        for index in range(3):
+            installed_raw = s.get(f"STEAM_TURBINE_{index}_INSTALLED")
+            installed = bool(installed_raw) if installed_raw is not None else any(
+                name in s for name in (f"GENERATOR_{index}_KW", f"STEAM_TURBINE_{index}_RPM")
+            )
+            power = optional_number(f"GENERATOR_{index}_KW")
+            rpm = optional_number(f"STEAM_TURBINE_{index}_RPM")
+            breaker_raw = s.get(f"GENERATOR_{index}_BREAKER")
+            breaker_open = None if breaker_raw is None else bool(breaker_raw)
+            if not installed:
+                status, status_class = "NON INSTALLÉ", ""
+            elif breaker_open is False or (breaker_open is None and power is not None and power > 0):
+                status, status_class = "COUPLÉ", "ok"
+            elif rpm is not None and rpm >= 2500:
+                status, status_class = "PRÊT À COUPLER", "warn"
+            elif rpm is not None and rpm > 0:
+                status, status_class = "DÉMARRAGE", "warn"
+            else:
+                status, status_class = "ARRÊTÉ", ""
+            main_generators.append({
+                "id": index, "installed": installed, "status": status, "status_class": status_class,
+                "breaker_open": breaker_open, "power_kw": power, "rpm": rpm,
+                "voltage": optional_number(f"GENERATOR_{index}_V"),
+                "current": optional_number(f"GENERATOR_{index}_A"),
+                "frequency": optional_number(f"GENERATOR_{index}_HERTZ"),
+            })
+
+        emergency_generators: list[dict[str, Any]] = []
+        for index in (1, 2):
+            status_raw = s.get(f"EMERGENCY_GENERATOR_{index}_STATUS")
+            mode_raw = s.get(f"EMERGENCY_GENERATOR_{index}_MODE")
+            if status_raw is None and mode_raw is None:
+                continue
+            maintenance = bool(s.get(f"EMERGENCY_GENERATOR_{index}_MAINTENANCE_NEEDED", False))
+            status_text = "INCONNU" if status_raw is None else str(status_raw)
+            normalized = status_text.casefold()
+            if maintenance:
+                status_class = "danger"
+            elif any(word in normalized for word in ("active", "running", "operative", "online", "started")):
+                status_class = "ok"
+            else:
+                status_class = "warn"
+            emergency_generators.append({
+                "id": index, "status": status_text, "status_class": status_class,
+                "mode": None if mode_raw is None else str(mode_raw),
+                "fuel": optional_number(f"EMERGENCY_GENERATOR_{index}_FUEL"),
+                "pressurizer": s.get(f"EMERGENCY_GENERATOR_{index}_PRESSURIZER"),
+                "maintenance": maintenance,
+            })
         return {
             "generated_kw": round(generated, 2),
             "demand_kw": round(demand_kw, 2),
             "power_balance_kw": round(generated - demand_kw, 2),
             "condenser_fill_pct": None if condenser_fill is None else round(condenser_fill, 2),
-            "pressurizer_pct": round(pressurizer, 2),
-            "retention_pct": round(retention, 2),
+            "pressurizer_pct": None if pressurizer is None else round(pressurizer, 2),
+            "retention_pct": None if retention is None else round(retention, 2),
+            "reservoirs": reservoirs,
+            "chemical_reservoirs": chemical_reservoirs,
+            "generators": {"main": main_generators, "emergency": emergency_generators},
         }
 
     def _set_alarm(self, alarm_id: str, severity: str, title: str, detail: str, active: bool) -> None:
