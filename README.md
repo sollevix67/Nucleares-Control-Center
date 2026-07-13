@@ -62,7 +62,9 @@ Le pilote ne commande que les variables annoncées comme accessibles en écritur
 
 La page **Supervision** affiche les niveaux disponibles du condenseur, du circuit primaire, du pressuriseur, du réservoir de refroidissement primaire, de la piscine du cœur, du réservoir externe et de la rétention. Les valeurs sont présentées en pourcentage lorsque la capacité est connue, sinon en litres.
 
-Les trois générateurs principaux indiquent leur état de couplage, leur disjoncteur, leur puissance, leur vitesse et leur fréquence. Les groupes électrogènes de secours affichent leur état, leur mode, leur carburant, leur pressuriseur et les besoins de maintenance lorsque ces variables sont exposées.
+Les trois générateurs principaux indiquent leur état de couplage, leur disjoncteur, leur puissance, leur vitesse et leur fréquence. Les groupes électrogènes de secours affichent leur état, leur mode, leur carburant en litres, leur pressuriseur et les besoins de maintenance lorsque ces variables sont exposées. Les principaux états anglais ou espagnols renvoyés par le jeu sont traduits en français.
+
+Les pourcentages du jeu sont normalisés automatiquement : une valeur de vide condenseur comprise entre `0` et `1` est interprétée comme une fraction (`1,0 = 100 %`), tandis qu’une valeur déjà comprise sur l’échelle `0–100` est conservée.
 
 ### Module chimique optionnel
 

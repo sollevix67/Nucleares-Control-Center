@@ -67,6 +67,9 @@ class ControlTests(unittest.TestCase):
                 center.derived = center._derive(state); center._evaluate_alarms(state)
                 self.assertIn("core_temp", center.alarms)
                 self.assertAlmostEqual(center.derived["condenser_fill_pct"], 55.0)
+                self.assertAlmostEqual(center.derived["vacuum_pct"], 100.0)
+                self.assertEqual(center.derived["core_state"], "OPÉRATIONNEL")
+                self.assertNotIn("vacuum", center.alarms)
                 expected_power = sum(state[f"GENERATOR_{i}_KW"] for i in range(3))
                 self.assertAlmostEqual(center.derived["generated_kw"], expected_power)
                 reservoir_ids = {item["id"] for item in center.derived["reservoirs"]}
@@ -75,6 +78,13 @@ class ControlTests(unittest.TestCase):
                 self.assertEqual(len(center.derived["generators"]["main"]), 3)
                 self.assertEqual(center.derived["generators"]["main"][0]["status"], "COUPLÉ")
                 self.assertEqual(len(center.derived["generators"]["emergency"]), 2)
+                emergency = center.derived["generators"]["emergency"]
+                self.assertEqual(emergency[0]["status"], "ARRÊTÉ")
+                self.assertEqual(emergency[0]["mode"], "AUTOMATIQUE")
+                self.assertEqual(emergency[0]["fuel"], 486.0)
+                self.assertEqual(emergency[0]["fuel_unit"], "L")
+                self.assertEqual(emergency[0]["pressurizer"], "PRESSURISÉ")
+                self.assertEqual(emergency[1]["status"], "EN ATTENTE")
                 self.assertEqual(center.derived["chemical_reservoirs"], [])
             finally:
                 app.DATA_DIR = old_data
@@ -228,6 +238,9 @@ class ControlTests(unittest.TestCase):
                 html = urllib.request.urlopen(base + "/").read().decode("utf-8")
                 self.assertIn("NUCLEARES", html); self.assertIn("autopilot-toggle", html)
                 self.assertIn("reservoir-list", html); self.assertIn("main-generator-list", html)
+                javascript = urllib.request.urlopen(base + "/app.js").read().decode("utf-8")
+                self.assertIn("d.vacuum_pct", javascript)
+                self.assertIn('generator.fuel_unit || "L"', javascript)
                 request = urllib.request.Request(base + "/api/autopilot", data=b'{"enabled":true}',
                                                  headers={"Content-Type": "application/json"}, method="POST")
                 response = json.load(urllib.request.urlopen(request))

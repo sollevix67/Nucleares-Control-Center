@@ -1,6 +1,17 @@
 const $ = (id) => document.getElementById(id);
 const fmt = (value, digits = 1) => value === null || value === undefined || Number.isNaN(Number(value)) ? "—" : Number(value).toFixed(digits);
 const state = { snapshot: null, history: {}, lastAlarmIds: new Set(), chartTimer: 0 };
+const GAME_TEXT_FR = {
+  ACTIVE:"ACTIF",ACTIVO:"ACTIF",ACTIVA:"ACTIVE",INACTIVE:"INACTIF",INACTIVO:"INACTIF",INACTIVA:"INACTIVE",
+  OPERATIVE:"OPÉRATIONNEL",OPERATIONAL:"OPÉRATIONNEL",OPERATIVO:"OPÉRATIONNEL",
+  OFFLINE:"HORS LIGNE",APAGADO:"ARRÊTÉ",DETENIDO:"ARRÊTÉ",ENCENDIDO:"EN MARCHE",
+  FUNCIONANDO:"EN MARCHE",STANDBY:"EN ATTENTE",ESPERA:"EN ATTENTE",LISTO:"PRÊT"
+};
+const gameText = value => {
+  if (value === null || value === undefined || value === "") return "INCONNU";
+  const key = String(value).normalize("NFD").replace(/[\u0300-\u036f]/g,"").trim().toUpperCase();
+  return GAME_TEXT_FR[key] || String(value);
+};
 
 const AREA_LABELS = {
   reactor: "Régulation du cœur", grid: "Suivi de la demande réseau", secondary: "Circuits secondaires",
@@ -99,7 +110,7 @@ function renderGenerators(generators) {
   $("emergency-generator-section").classList.toggle("hidden", !emergency.length);
   if (emergency.length) {
     $("emergency-generator-list").innerHTML = emergency.map(generator => `<div class="generator-row"><div class="generator-number">E${generator.id}</div><div class="generator-copy"><strong>Groupe de secours ${generator.id}</strong><small><span class="status-pill ${generator.status_class}">${escapeHtml(generator.status)}</span> · mode ${escapeHtml(generator.mode ?? '—')}${generator.maintenance ? ' · MAINTENANCE REQUISE' : ''}</small></div>
-      <div class="generator-metrics"><span>CARBURANT<b>${measurement(generator.fuel,"%")}</b></span><span>PRESSURISEUR<b>${escapeHtml(generator.pressurizer ?? '—')}</b></span></div></div>`).join("");
+      <div class="generator-metrics"><span>CARBURANT<b>${measurement(generator.fuel,generator.fuel_unit || "L")}</b></span><span>PRESSURISEUR<b>${escapeHtml(generator.pressurizer ?? '—')}</b></span></div></div>`).join("");
   }
 }
 
@@ -133,7 +144,7 @@ function render(snapshot) {
   const tempPct = Math.max(0, Math.min(100, (temp - 250) / 160 * 100));
   $("temp-ring").style.background = `conic-gradient(${temp >= 390 ? 'var(--red)' : temp >= 355 ? 'var(--amber)' : 'var(--green)'} 0 ${tempPct}%, #23312d ${tempPct}% 100%)`;
   $("temp-marker").style.left = `${tempPct}%`;
-  const coreState = s.CORE_STATE || (snapshot.connected ? "EN LIGNE" : "INCONNU"); $("core-state").textContent = coreState;
+  const coreState = d.core_state || (s.CORE_STATE ? gameText(s.CORE_STATE) : (snapshot.connected ? "EN LIGNE" : "INCONNU")); $("core-state").textContent = coreState;
   $("core-state").className = `status-pill ${statusClass(temp,355,390)}`;
   $("criticality").textContent = fmt(s.CORE_STATE_CRITICALITY,3); $("core-pressure").textContent = fmt(s.CORE_PRESSURE);
   $("core-integrity").textContent = fmt(s.CORE_INTEGRITY); const rod = s.ROD_BANK_POS_0_ACTUAL ?? s.RODS_POS_ACTUAL;
@@ -143,7 +154,7 @@ function render(snapshot) {
   $("grid-status").textContent = Math.abs(balance) < 3000 ? "STABLE" : balance < 0 ? "SOUS-PRODUCTION" : "SURPLUS";
   $("grid-status").className = `status-pill ${Math.abs(balance) < 3000 ? 'ok' : 'warn'}`;
   trainCards(s, Number(d.demand_kw || 0) + auto.grid_buffer_mw * 1000);
-  const hydraulic = { condenser: d.condenser_fill_pct, vacuum: s.CONDENSER_VACUUM, primary: s.COOLANT_CORE_PRIMARY_LOOP_LEVEL, pressurizer: d.pressurizer_pct, retention: d.retention_pct };
+  const hydraulic = { condenser: d.condenser_fill_pct, vacuum: d.vacuum_pct, primary: s.COOLANT_CORE_PRIMARY_LOOP_LEVEL, pressurizer: d.pressurizer_pct, retention: d.retention_pct };
   const hydraulicText = { condenser: 'condenser-fill', vacuum: 'vacuum', primary: 'primary-level', pressurizer: 'pressurizer', retention: 'retention' };
   Object.entries(hydraulic).forEach(([key,value]) => { $(hydraulicText[key]).textContent = `${fmt(value)} %`; setBar(`${key}-bar`, value, key === 'retention' ? 'high' : 'low'); });
   const chemistry = snapshot.chemistry || {status:'unavailable',message:'Module chimique indisponible'};

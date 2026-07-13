@@ -20,6 +20,7 @@ import traceback
 import urllib.error
 import urllib.parse
 import urllib.request
+import unicodedata
 import webbrowser
 from collections import deque
 from dataclasses import dataclass, field
@@ -30,7 +31,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 
-APP_VERSION = "0.3.0"
+APP_VERSION = "0.3.1"
 BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
 USER_ROOT = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 STATIC_DIR = BUNDLE_ROOT / "static"
@@ -121,6 +122,42 @@ def as_number(value: Any, default: float = 0.0) -> float:
         return number if math.isfinite(number) else default
     except (TypeError, ValueError):
         return default
+
+
+def as_percent(value: Any, default: float = 0.0) -> float:
+    """Accept game percentages represented either as 0..1 or 0..100."""
+    number = as_number(value, default)
+    return number * 100.0 if 0.0 <= number <= 1.0 else number
+
+
+def game_text_fr(value: Any) -> str:
+    """Translate common English/Spanish status labels returned by Nucleares."""
+    if value is None:
+        return "INCONNU"
+    text = str(value).strip()
+    key = "".join(
+        char for char in unicodedata.normalize("NFKD", text) if not unicodedata.combining(char)
+    ).upper()
+    translations = {
+        "ACTIVE": "ACTIF", "ACTIVO": "ACTIF", "ACTIVA": "ACTIVE",
+        "INACTIVE": "INACTIF", "INACTIVO": "INACTIF", "INACTIVA": "INACTIVE",
+        "RUNNING": "EN MARCHE", "FUNCIONANDO": "EN MARCHE", "ENCENDIDO": "EN MARCHE",
+        "STARTED": "DÉMARRÉ", "ARRANCADO": "DÉMARRÉ", "STARTING": "DÉMARRAGE", "ARRANCANDO": "DÉMARRAGE",
+        "STOPPED": "ARRÊTÉ", "DETENIDO": "ARRÊTÉ", "APAGADO": "ARRÊTÉ",
+        "STANDBY": "EN ATTENTE", "EN ESPERA": "EN ATTENTE", "ESPERA": "EN ATTENTE",
+        "AVAILABLE": "DISPONIBLE", "DISPONIBLE": "DISPONIBLE",
+        "OPERATIVE": "OPÉRATIONNEL", "OPERATIONAL": "OPÉRATIONNEL", "OPERATIVO": "OPÉRATIONNEL",
+        "OFFLINE": "HORS LIGNE", "FUERA DE LINEA": "HORS LIGNE",
+        "OUT OF SERVICE": "HORS SERVICE", "FUERA DE SERVICIO": "HORS SERVICE",
+        "NO POWER": "SANS ÉNERGIE", "SIN ENERGIA": "SANS ÉNERGIE",
+        "MAINTENANCE REQUIRED": "MAINTENANCE REQUISE", "REQUIERE MANTENIMIENTO": "MAINTENANCE REQUISE",
+        "AUTO": "AUTOMATIQUE", "AUTOMATIC": "AUTOMATIQUE", "AUTOMATICO": "AUTOMATIQUE",
+        "MANUAL": "MANUEL",
+        "PRESSURIZED": "PRESSURISÉ", "PRESURIZADO": "PRESSURISÉ",
+        "NOT PRESSURIZED": "NON PRESSURISÉ", "NO PRESURIZADO": "NON PRESSURISÉ",
+        "OK": "OK", "READY": "PRÊT", "LISTO": "PRÊT",
+    }
+    return translations.get(key, text)
 
 
 def normalize_value(value: Any) -> Any:
@@ -458,8 +495,9 @@ class ControlCenter:
         liquid = as_number(s.get("CONDENSER_VOLUME"))
         vapor = as_number(s.get("CONDENSER_VAPOR_VOLUME"))
         condenser_fill = liquid / (liquid + vapor) * 100.0 if liquid + vapor > 0 else None
+        vacuum = None if s.get("CONDENSER_VACUUM") is None else as_percent(s.get("CONDENSER_VACUUM"))
         primary_tank = optional_number("CORE_PRIMARY_CIRCUIT_COOLING_TANK_VOLUME")
-        pressurizer = optional_number("PRESSURIZER_FILL_LEVEL")
+        pressurizer = None if s.get("PRESSURIZER_FILL_LEVEL") is None else as_percent(s.get("PRESSURIZER_FILL_LEVEL"))
         if pressurizer is None and primary_tank is not None:
             pressurizer = primary_tank / self.PRIMARY_COOLING_TANK_MAX * 100.0
         retention_volume = optional_number("VACUUM_RETENTION_TANK_VOLUME")
@@ -498,6 +536,8 @@ class ControlCenter:
                 continue
             value = as_number(raw_value)
             is_percent = "LEVEL" in name and 0 <= value <= 100
+            if is_percent:
+                value = as_percent(raw_value)
             chemical_reservoirs.append({
                 "id": name.lower(),
                 "label": name.removeprefix("CHEM_").replace("_", " ").title(),
@@ -542,26 +582,29 @@ class ControlCenter:
             if status_raw is None and mode_raw is None:
                 continue
             maintenance = bool(s.get(f"EMERGENCY_GENERATOR_{index}_MAINTENANCE_NEEDED", False))
-            status_text = "INCONNU" if status_raw is None else str(status_raw)
+            status_text = game_text_fr(status_raw)
             normalized = status_text.casefold()
             if maintenance:
                 status_class = "danger"
-            elif any(word in normalized for word in ("active", "running", "operative", "online", "started")):
+            elif any(word in normalized for word in ("actif", "marche", "opérationnel", "ligne", "démarré")):
                 status_class = "ok"
             else:
                 status_class = "warn"
             emergency_generators.append({
                 "id": index, "status": status_text, "status_class": status_class,
-                "mode": None if mode_raw is None else str(mode_raw),
+                "mode": game_text_fr(mode_raw),
                 "fuel": optional_number(f"EMERGENCY_GENERATOR_{index}_FUEL"),
-                "pressurizer": s.get(f"EMERGENCY_GENERATOR_{index}_PRESSURIZER"),
+                "fuel_unit": "L",
+                "pressurizer": game_text_fr(s.get(f"EMERGENCY_GENERATOR_{index}_PRESSURIZER")),
                 "maintenance": maintenance,
             })
         return {
             "generated_kw": round(generated, 2),
             "demand_kw": round(demand_kw, 2),
             "power_balance_kw": round(generated - demand_kw, 2),
+            "core_state": game_text_fr(s.get("CORE_STATE")),
             "condenser_fill_pct": None if condenser_fill is None else round(condenser_fill, 2),
+            "vacuum_pct": None if vacuum is None else round(max(0.0, min(100.0, vacuum)), 2),
             "pressurizer_pct": None if pressurizer is None else round(pressurizer, 2),
             "retention_pct": None if retention is None else round(retention, 2),
             "reservoirs": reservoirs,
@@ -589,7 +632,7 @@ class ControlCenter:
         integrity = as_number(s.get("CORE_INTEGRITY"), 100.0)
         imminent = bool(s.get("CORE_IMMINENT_FUSION", False))
         cond = self.derived.get("condenser_fill_pct")
-        vacuum = as_number(s.get("CONDENSER_VACUUM"), 100.0)
+        vacuum = as_percent(s.get("CONDENSER_VACUUM"), 100.0)
         primary = as_number(s.get("COOLANT_CORE_PRIMARY_LOOP_LEVEL"), 100.0)
 
         self._set_alarm("connection", "critical", "Connexion au jeu perdue", "", False)
